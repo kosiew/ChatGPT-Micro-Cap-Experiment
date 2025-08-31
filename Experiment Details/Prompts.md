@@ -38,3 +38,20 @@ Currently, this is your return (above/below) over the market: (insert returns).
 The last A.I. analyst had this thesis for current holdings: (insert last thesis). 
 
 **Note: by no means am I a "prompt engineer". I came up with these off of my head. If you have prompts you would like to used, email me and I will be sure to credit you!**
+
+---
+
+## Malaysian Market Adaptation
+
+For the KLSE (Malaysian) trading system, specialized prompts have been created that focus on Malaysian market dynamics and regulations. These prompts incorporate:
+
+- **Malaysian Market Structure**: Board lot requirements (100 shares), KLSE trading hours (GMT+8), Main Market vs ACE Market
+- **Local Regulations**: Bursa Malaysia rules, Securities Commission Malaysia guidelines, foreign ownership limits
+- **Economic Context**: Malaysian GDP factors, Bank Negara Malaysia monetary policy, government fiscal policies
+- **Currency Considerations**: MYR exchange rate impacts, regional ASEAN correlations
+- **Sector Dynamics**: Malaysian-specific sector rotations (plantation, banking, technology, healthcare)
+- **Risk Management**: Malaysian market liquidity patterns, regulatory disclosure requirements
+
+📁 **Location**: `KLSE_System/KLSE_Market_Prompts.md`
+
+These Malaysian-focused prompts ensure AI decision-making aligns with local market conditions, regulatory requirements, and investment opportunities specific to the Malaysian equity market.

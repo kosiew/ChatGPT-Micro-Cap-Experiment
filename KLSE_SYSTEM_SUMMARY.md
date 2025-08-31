@@ -40,6 +40,13 @@ This document summarizes the complete Malaysian KLSE (Kuala Lumpur Stock Exchang
    - Sector classification and analysis
    - Stock universe generation for AI selection
 
+5. **Malaysian AI Prompts** (`KLSE_Market_Prompts.md` & `klse_prompt_manager.py`)
+   - Malaysia-specific trading prompts and guidelines
+   - Local market dynamics and regulatory considerations
+   - Economic context integration (BNM policy, government initiatives)
+   - Sector-specific analysis frameworks
+   - Risk management aligned with Malaysian market conditions
+
 ---
 
 ## 💰 Financial Configuration
@@ -116,6 +123,9 @@ Based on comprehensive micro-cap analysis:
 - ✅ Malaysian market hours (GMT+8 timezone)
 - ✅ .KL ticker format support
 - ✅ Malaysian micro-cap focus (< 300M MYR)
+- ✅ Malaysian-focused AI prompts and guidelines
+- ✅ Local regulatory compliance (Bursa Malaysia, SC Malaysia)
+- ✅ Economic context integration (BNM policy, government initiatives)
 
 ### Trading Automation
 - ✅ Automatic stop-loss execution
