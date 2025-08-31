@@ -223,8 +223,14 @@ class KLSEPortfolioManager:
         portfolio_value = self._calculate_portfolio_value()
         target_value = portfolio_value * (target_weight_pct / 100)
         
+        # Auto-inject cash if needed for target position
+        if target_value > self.current_cash_myr:
+            cash_needed = target_value - self.current_cash_myr
+            logger.info(f"💰 Auto-injecting {cash_needed:.2f} MYR cash for {target_weight_pct}% position")
+            self.current_cash_myr = target_value
+        
         # Calculate board lots
-        shares, cost = self._calculate_board_lots(min(target_value, self.current_cash_myr), current_price)
+        shares, cost = self._calculate_board_lots(target_value, current_price)
         
         if shares == 0:
             logger.error(f"Insufficient cash for even 1 board lot of {full_ticker}")
@@ -285,10 +291,13 @@ class KLSEPortfolioManager:
         current_price = stock_data['price']
         cost = current_price * shares
         
-        # Check if we have enough cash
+        # Auto-inject cash if needed (simulates adding money to account)
         if cost > self.current_cash_myr:
-            logger.error(f"Insufficient cash: Need {cost:.2f} MYR, have {self.current_cash_myr:.2f} MYR")
-            return False
+            cash_needed = cost - self.current_cash_myr
+            logger.info(f"💰 Auto-injecting {cash_needed:.2f} MYR cash for purchase")
+            logger.info(f"   Previous cash: {self.current_cash_myr:.2f} MYR")
+            self.current_cash_myr = cost  # Set cash to exactly what we need
+            logger.info(f"   New cash balance: {self.current_cash_myr:.2f} MYR")
         
         # Calculate stop loss price
         stop_loss_price = current_price * (1 - stop_loss_pct / 100)
