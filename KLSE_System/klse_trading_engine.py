@@ -276,6 +276,51 @@ class KLSETradingEngine:
         
         return success
     
+    def add_position_by_quantity(self, ticker: str, shares: int, 
+                                stop_loss_pct: float = 15.0, company_name: str = "", 
+                                sector: str = "") -> bool:
+        """
+        Add new position to portfolio by exact number of shares
+        
+        Args:
+            ticker: Malaysian stock code or name (e.g., "MBMR", "1155", "AXIATA")
+            shares: Exact number of shares to buy
+            stop_loss_pct: Stop loss percentage below cost basis
+            company_name: Company name for records
+            sector: Business sector
+        """
+        if not ENHANCED_AVAILABLE:
+            logger.error("Enhanced features not available")
+            return False
+        
+        # Convert ticker to yfinance format
+        yf_ticker = self._convert_to_yfinance_ticker(ticker)
+        if not yf_ticker:
+            logger.error(f"Could not convert ticker: {ticker}")
+            return False
+        
+        # Check market eligibility
+        eligibility = self.check_market_eligibility()
+        if not eligibility['can_trade']:
+            logger.warning(f"Cannot trade: {eligibility['reason']}")
+            return False
+        
+        # Add the position using the converted ticker
+        success = self.portfolio_manager.add_stock_by_quantity(
+            ticker=yf_ticker,  # Use converted ticker
+            shares=shares,
+            stop_loss_pct=stop_loss_pct,
+            company_name=company_name,
+            sector=sector
+        )
+        
+        if success:
+            logger.info(f"✅ Added {shares} shares of {ticker} -> {yf_ticker}")
+        else:
+            logger.error(f"❌ Failed to add {shares} shares of {ticker} -> {yf_ticker}")
+        
+        return success
+
     def remove_position(self, ticker: str, reason: str = "Manual sale") -> bool:
         """
         Manually remove a position (sell all shares)
@@ -322,6 +367,38 @@ class KLSETradingEngine:
                    f"(Total: {sale_value:.2f} MYR) - {reason}")
         
         return True
+    
+    def _convert_to_yfinance_ticker(self, ticker: str) -> str:
+        """
+        Convert Malaysian stock ticker to yfinance format
+        
+        Args:
+            ticker: Malaysian stock code or name (e.g., "MBMR", "1155", "AXIATA")
+            
+        Returns:
+            yfinance compatible ticker (e.g., "5983.KL") or None if conversion fails
+        """
+        try:
+            # If already in .KL format, return as is
+            if ticker.endswith('.KL'):
+                return ticker
+            
+            # If it's a numeric code, add .KL suffix
+            if ticker.isdigit():
+                return f"{ticker}.KL"
+            
+            # For company names, try to extract ticker code using i3investor
+            if hasattr(self, 'i3_scraper'):
+                ticker_code = self.i3_scraper.extract_ticker_code(ticker)
+                if ticker_code:
+                    return f"{ticker_code}.KL"
+            
+            # Fallback: assume it's a ticker name and add .KL
+            return f"{ticker}.KL"
+            
+        except Exception as e:
+            logger.error(f"Error converting ticker {ticker}: {e}")
+            return None
     
     def get_trading_summary(self) -> Dict[str, any]:
         """Get comprehensive trading summary"""
@@ -493,6 +570,35 @@ def add_position(
         typer.echo(f"✅ Successfully added position: {ticker} ({target_weight}% target weight)")
     else:
         typer.echo(f"❌ Failed to add position: {ticker}", err=True)
+        raise typer.Exit(1)
+
+@app.command("buy")
+def buy_shares(
+    ticker: Annotated[str, typer.Argument(help="Stock ticker (e.g., 1155 for Maybank)")],
+    shares: Annotated[int, typer.Argument(help="Number of shares to buy")],
+    stop_loss: Annotated[float, typer.Option("--stop-loss", "-s", help="Stop loss percentage")] = 15.0,
+    company_name: Annotated[str, typer.Option("--name", "-n", help="Company name")] = "",
+    sector: Annotated[str, typer.Option("--sector", help="Business sector")] = "",
+    alpha_vantage_key: Annotated[
+        Optional[str], 
+        typer.Option("--alpha-vantage-key", "-k", help="Alpha Vantage API key")
+    ] = None
+):
+    """Buy a specific number of shares"""
+    engine = KLSETradingEngine(alpha_vantage_key=alpha_vantage_key)
+    
+    success = engine.add_position_by_quantity(
+        ticker=ticker,
+        shares=shares,
+        stop_loss_pct=stop_loss,
+        company_name=company_name,
+        sector=sector
+    )
+    
+    if success:
+        typer.echo(f"✅ Successfully bought {shares} shares of {ticker}")
+    else:
+        typer.echo(f"❌ Failed to buy {shares} shares of {ticker}", err=True)
         raise typer.Exit(1)
 
 @app.command("remove")

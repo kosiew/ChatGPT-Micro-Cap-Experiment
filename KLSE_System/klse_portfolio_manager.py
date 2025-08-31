@@ -261,6 +261,73 @@ class KLSEPortfolioManager:
         logger.info(f"Added {shares} shares of {full_ticker} at {current_price:.3f} MYR (Total: {cost:.2f} MYR)")
         return True
     
+    def add_stock_by_quantity(self, ticker: str, shares: int, stop_loss_pct: float = 15.0, 
+                             company_name: str = "", sector: str = "") -> bool:
+        """
+        Add a new stock to portfolio by specifying exact number of shares
+        
+        Args:
+            ticker: Malaysian stock code (e.g., "1155" for Maybank)
+            shares: Exact number of shares to add
+            stop_loss_pct: Stop loss percentage below cost basis
+            company_name: Company name for records
+            sector: Business sector
+        """
+        # Ensure .KL suffix for data fetching
+        full_ticker = f"{ticker}.KL" if not ticker.endswith('.KL') else ticker
+        
+        # Get current stock data
+        stock_data = self._get_stock_data(full_ticker)
+        if not stock_data:
+            logger.error(f"Could not fetch data for {full_ticker}")
+            return False
+        
+        current_price = stock_data['price']
+        cost = current_price * shares
+        
+        # Check if we have enough cash
+        if cost > self.current_cash_myr:
+            logger.error(f"Insufficient cash: Need {cost:.2f} MYR, have {self.current_cash_myr:.2f} MYR")
+            return False
+        
+        # Calculate stop loss price
+        stop_loss_price = current_price * (1 - stop_loss_pct / 100)
+        
+        # Create new position
+        new_position = {
+            'date_added': datetime.now().strftime('%Y-%m-%d'),
+            'ticker': full_ticker,
+            'company_name': company_name or ticker,
+            'shares': shares,
+            'avg_cost_myr': current_price,
+            'stop_loss_myr': stop_loss_price,
+            'sector': sector or 'Unknown',
+            'current_price_myr': current_price,
+            'market_value_myr': cost
+        }
+        
+        # Add to portfolio
+        self.portfolio = pd.concat([self.portfolio, pd.DataFrame([new_position])], ignore_index=True)
+        
+        # Update cash balance
+        self.current_cash_myr -= cost
+        
+        # Save to file
+        self._save_portfolio()
+        
+        # Log the trade
+        self._log_trade(
+            action='BUY',
+            ticker=full_ticker,
+            shares=shares,
+            price=current_price,
+            total_value=cost,
+            data_source=stock_data.get('source', 'unknown')
+        )
+        
+        logger.info(f"Added {shares} shares of {full_ticker} at {current_price:.3f} MYR (Total: {cost:.2f} MYR)")
+        return True
+    
     def _calculate_portfolio_value(self) -> float:
         """Calculate total portfolio value including cash"""
         if self.portfolio.empty:

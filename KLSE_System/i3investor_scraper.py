@@ -182,6 +182,23 @@ class I3InvestorScraper:
         self.logger.error(f"❌ i3investor: All {max_retries} attempts failed for ticker {clean_ticker}")
         return None
 
+    def extract_ticker_code(self, ticker: str, max_retries: int = 3) -> Optional[str]:
+        """
+        Extract just the numeric ticker code from i3investor website
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., 'MBMR', 'AXIATA')
+            max_retries: Maximum number of retry attempts
+            
+        Returns:
+            Just the numeric code (e.g., '5983'), or None if failed
+        """
+        full_ticker = self.get_ticker_code(ticker, max_retries)
+        if full_ticker:
+            # Extract just the numeric part from "5983.KL"
+            return full_ticker.replace('.KL', '')
+        return None
+
     def test_scraper(self, test_tickers: list = None):
         """Test the scraper with a few known tickers"""
         if test_tickers is None:
