@@ -1,0 +1,5 @@
+date,type,ticker,value_myr,return_pct,positions_count,data_source
+2025-08-31,PORTFOLIO,TOTAL,10000.0,0.0,3.0,
+2025-08-31,POSITION,4723.KL,2997.0,0.0,,yfinance
+2025-08-31,POSITION,0090.KL,2479.5,0.0,,yfinance
+2025-08-31,POSITION,0176.KL,1995.0,0.0,,yfinance

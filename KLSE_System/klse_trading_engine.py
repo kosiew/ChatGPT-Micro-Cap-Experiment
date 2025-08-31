@@ -1,0 +1,413 @@
+#!/usr/bin/env python3
+"""
+KLSE Trading Script
+Malaysian stock trading engine for ChatGPT micro-cap experiment
+"""
+
+import pandas as pd
+import numpy as np
+from datetime import datetime, timezone, timedelta
+import os
+import sys
+import logging
+from typing import Dict, List, Optional
+import argparse
+
+# Add parent directory for imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import our portfolio manager and data fetcher
+try:
+    from KLSE_System.klse_portfolio_manager import KLSEPortfolioManager
+    from redundant_data_fetcher import KLSEDataFetcher
+    ENHANCED_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️  Import error: {e}")
+    print("   Falling back to basic functionality")
+    ENHANCED_AVAILABLE = False
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+class KLSETradingEngine:
+    """
+    Malaysian stock trading engine for automated portfolio management
+    """
+    
+    def __init__(self, alpha_vantage_key: str = None):
+        self.alpha_vantage_key = alpha_vantage_key
+        
+        # Initialize portfolio manager
+        if ENHANCED_AVAILABLE:
+            self.portfolio_manager = KLSEPortfolioManager(
+                starting_cash_myr=10000.0,  # 10K MYR starting capital
+                alpha_vantage_key=alpha_vantage_key
+            )
+            self.data_fetcher = KLSEDataFetcher(alpha_vantage_key)
+        else:
+            logger.error("Portfolio manager not available - please check imports")
+            sys.exit(1)
+        
+        # Malaysian trading constraints
+        self.TRADING_CURRENCY = "MYR"
+        self.MIN_BOARD_LOT = 100
+        self.MAX_POSITIONS = 10  # Maximum active positions
+        self.MIN_CASH_RESERVE_MYR = 500  # Keep minimum cash reserve
+        
+        # File paths
+        self.daily_update_file = "KLSE_System/klse_daily_updates.csv"
+        self.performance_file = "KLSE_System/klse_performance_log.csv"
+        
+        # Ensure directory exists
+        os.makedirs("KLSE_System", exist_ok=True)
+        
+        logger.info("KLSE Trading Engine initialized")
+    
+    def check_market_eligibility(self) -> Dict[str, any]:
+        """Check if market is eligible for trading"""
+        market_status = self.portfolio_manager.get_market_status()
+        
+        # Allow trading even when market is closed for testing/demo
+        # Real implementation might restrict this
+        eligibility = {
+            'can_trade': True,  # Always allow for demo purposes
+            'market_open': market_status['is_open'],
+            'reason': 'Market status checked',
+            'market_info': market_status
+        }
+        
+        if not market_status['is_open']:
+            eligibility['reason'] = f"Market closed. Next open: {market_status['next_open']}"
+            logger.info(f"⏰ {eligibility['reason']}")
+        
+        return eligibility
+    
+    def execute_daily_processing(self) -> Dict[str, any]:
+        """Execute daily portfolio processing"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        logger.info(f"🇲🇾 Starting KLSE daily processing for {today}")
+        
+        # Check market eligibility
+        eligibility = self.check_market_eligibility()
+        
+        # Process portfolio updates (stop-losses, valuations)
+        update_result = self.portfolio_manager.process_daily_update()
+        
+        if update_result['status'] != 'success':
+            logger.error(f"Portfolio update failed: {update_result}")
+            return {'status': 'error', 'message': 'Portfolio update failed'}
+        
+        summary = update_result['summary']
+        
+        # Log daily performance
+        daily_record = {
+            'date': today,
+            'total_equity_myr': summary['total_equity'],
+            'cash_balance_myr': summary['cash_balance'],
+            'total_stock_value_myr': summary['total_stock_value'],
+            'total_return_pct': summary['total_return_pct'],
+            'positions_count': summary['positions'],
+            'stops_triggered': summary['stops_triggered'],
+            'market_open': eligibility['market_open']
+        }
+        
+        # Save daily record
+        self._save_daily_record(daily_record)
+        
+        # Log performance
+        self._log_performance(daily_record, update_result.get('positions', []))
+        
+        logger.info(f"✅ Daily processing complete: {summary['total_equity']:.2f} MYR "
+                   f"({summary['total_return_pct']:+.2f}%)")
+        
+        return {
+            'status': 'success',
+            'date': today,
+            'summary': summary,
+            'positions': update_result.get('positions', []),
+            'stops_triggered': update_result.get('stops_triggered', []),
+            'market_info': eligibility['market_info']
+        }
+    
+    def _save_daily_record(self, record: Dict):
+        """Save daily record to CSV"""
+        df = pd.DataFrame([record])
+        
+        if os.path.exists(self.daily_update_file):
+            existing = pd.read_csv(self.daily_update_file)
+            # Check if today's record already exists
+            if record['date'] not in existing['date'].values:
+                df = pd.concat([existing, df], ignore_index=True)
+            else:
+                # Update existing record
+                existing.loc[existing['date'] == record['date']] = record
+                df = existing
+        
+        df.to_csv(self.daily_update_file, index=False)
+    
+    def _log_performance(self, daily_record: Dict, positions: List[Dict]):
+        """Log detailed performance data"""
+        performance_data = []
+        
+        # Portfolio-level record
+        performance_data.append({
+            'date': daily_record['date'],
+            'type': 'PORTFOLIO',
+            'ticker': 'TOTAL',
+            'value_myr': daily_record['total_equity_myr'],
+            'return_pct': daily_record['total_return_pct'],
+            'positions_count': daily_record['positions_count']
+        })
+        
+        # Individual position records
+        for position in positions:
+            if position['action'] == 'HOLD':
+                performance_data.append({
+                    'date': daily_record['date'],
+                    'type': 'POSITION',
+                    'ticker': position['ticker'],
+                    'value_myr': position['position_value'],
+                    'return_pct': ((position['current_price'] - position['cost_basis']) / position['cost_basis']) * 100,
+                    'data_source': position.get('data_source', 'unknown')
+                })
+        
+        # Save to performance log
+        perf_df = pd.DataFrame(performance_data)
+        
+        if os.path.exists(self.performance_file):
+            existing_perf = pd.read_csv(self.performance_file)
+            # Remove existing records for today
+            existing_perf = existing_perf[existing_perf['date'] != daily_record['date']]
+            perf_df = pd.concat([existing_perf, perf_df], ignore_index=True)
+        
+        perf_df.to_csv(self.performance_file, index=False)
+    
+    def add_new_position(self, ticker: str, target_weight_pct: float, 
+                        stop_loss_pct: float = 15.0, company_name: str = "", 
+                        sector: str = "") -> bool:
+        """
+        Add new position to portfolio
+        
+        Args:
+            ticker: Malaysian stock code (e.g., "1155" for Maybank)
+            target_weight_pct: Target weight as percentage of portfolio
+            stop_loss_pct: Stop loss percentage below cost basis
+            company_name: Company name for records
+            sector: Business sector
+        """
+        # Check if we can add more positions
+        current_positions = len(self.portfolio_manager.portfolio)
+        
+        if current_positions >= self.MAX_POSITIONS:
+            logger.warning(f"Maximum positions ({self.MAX_POSITIONS}) reached")
+            return False
+        
+        # Check market eligibility
+        eligibility = self.check_market_eligibility()
+        if not eligibility['can_trade']:
+            logger.warning(f"Cannot trade: {eligibility['reason']}")
+            return False
+        
+        # Check cash availability
+        if self.portfolio_manager.current_cash_myr < self.MIN_CASH_RESERVE_MYR:
+            logger.warning(f"Insufficient cash (reserve: {self.MIN_CASH_RESERVE_MYR} MYR)")
+            return False
+        
+        # Add the position
+        success = self.portfolio_manager.add_stock(
+            ticker=ticker,
+            target_weight_pct=target_weight_pct,
+            stop_loss_pct=stop_loss_pct,
+            company_name=company_name,
+            sector=sector
+        )
+        
+        if success:
+            logger.info(f"✅ Added new position: {ticker} ({target_weight_pct}% target weight)")
+        else:
+            logger.error(f"❌ Failed to add position: {ticker}")
+        
+        return success
+    
+    def remove_position(self, ticker: str, reason: str = "Manual sale") -> bool:
+        """
+        Manually remove a position (sell all shares)
+        
+        Args:
+            ticker: Stock ticker to sell
+            reason: Reason for sale
+        """
+        # Find position in portfolio
+        position_mask = self.portfolio_manager.portfolio['ticker'] == ticker
+        
+        if not position_mask.any():
+            logger.error(f"Position {ticker} not found in portfolio")
+            return False
+        
+        position = self.portfolio_manager.portfolio[position_mask].iloc[0]
+        shares = position['shares']
+        
+        # Get current price
+        stock_data = self.portfolio_manager._get_stock_data(ticker)
+        if not stock_data:
+            logger.error(f"Cannot get current price for {ticker}")
+            return False
+        
+        current_price = stock_data['price']
+        sale_value = current_price * shares
+        
+        # Add cash from sale
+        self.portfolio_manager.current_cash_myr += sale_value
+        
+        # Log the trade
+        self.portfolio_manager._log_trade(
+            "SELL_MANUAL", ticker, shares, current_price, sale_value,
+            stock_data.get('source', 'unknown')
+        )
+        
+        # Remove from portfolio
+        self.portfolio_manager.portfolio = self.portfolio_manager.portfolio[~position_mask]
+        
+        # Save portfolio
+        self.portfolio_manager._save_portfolio()
+        
+        logger.info(f"✅ Sold {shares} shares of {ticker} at {current_price:.3f} MYR "
+                   f"(Total: {sale_value:.2f} MYR) - {reason}")
+        
+        return True
+    
+    def get_trading_summary(self) -> Dict[str, any]:
+        """Get comprehensive trading summary"""
+        portfolio_summary = self.portfolio_manager.get_portfolio_summary()
+        
+        # Add trading-specific metrics
+        trading_summary = {
+            **portfolio_summary,
+            'max_positions': self.MAX_POSITIONS,
+            'available_position_slots': self.MAX_POSITIONS - portfolio_summary['total_positions'],
+            'min_cash_reserve_myr': self.MIN_CASH_RESERVE_MYR,
+            'can_add_positions': (
+                portfolio_summary['total_positions'] < self.MAX_POSITIONS and
+                portfolio_summary['cash_balance'] > self.MIN_CASH_RESERVE_MYR
+            )
+        }
+        
+        return trading_summary
+    
+    def generate_daily_report(self) -> str:
+        """Generate daily trading report"""
+        summary = self.get_trading_summary()
+        market_status = summary['market_status']
+        
+        report = []
+        report.append("🇲🇾 KLSE DAILY TRADING REPORT")
+        report.append("=" * 50)
+        report.append(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} GMT+8")
+        report.append(f"Market Status: {'🟢 OPEN' if market_status['is_open'] else '🔴 CLOSED'}")
+        report.append("")
+        
+        # Portfolio Overview
+        report.append("📊 PORTFOLIO OVERVIEW")
+        report.append("-" * 30)
+        report.append(f"Total Equity: {summary['total_equity']:,.2f} MYR")
+        report.append(f"Cash Balance: {summary['cash_balance']:,.2f} MYR")
+        report.append(f"Stock Value: {summary['total_stock_value']:,.2f} MYR")
+        report.append(f"Total Return: {summary['total_return_pct']:+.2f}%")
+        report.append(f"Active Positions: {summary['total_positions']}/{self.MAX_POSITIONS}")
+        report.append("")
+        
+        # Position Details
+        if summary['positions']:
+            report.append("📋 POSITION DETAILS")
+            report.append("-" * 30)
+            for pos in summary['positions']:
+                pnl_symbol = "🟢" if pos['position_pnl'] >= 0 else "🔴"
+                report.append(f"{pnl_symbol} {pos['ticker']}: {pos['shares']} shares")
+                report.append(f"   Price: {pos['current_price']:.3f} MYR (Cost: {pos['avg_cost']:.3f})")
+                report.append(f"   Value: {pos['position_value']:,.2f} MYR")
+                report.append(f"   PnL: {pos['position_pnl']:+,.2f} MYR ({pos['position_return_pct']:+.2f}%)")
+                report.append(f"   Stop Loss: {pos['stop_loss']:.3f} MYR")
+                report.append("")
+        else:
+            report.append("📋 No active positions")
+            report.append("")
+        
+        # Trading Capacity
+        report.append("⚙️ TRADING CAPACITY")
+        report.append("-" * 30)
+        report.append(f"Available Slots: {summary['available_position_slots']}")
+        report.append(f"Can Add Positions: {'✅ Yes' if summary['can_add_positions'] else '❌ No'}")
+        report.append(f"Min Cash Reserve: {self.MIN_CASH_RESERVE_MYR} MYR")
+        
+        return "\n".join(report)
+
+def main():
+    """Main trading script execution"""
+    parser = argparse.ArgumentParser(description='KLSE Trading Engine')
+    parser.add_argument('--action', choices=['daily', 'report', 'demo'], 
+                       default='daily', help='Action to perform')
+    parser.add_argument('--alpha-vantage-key', help='Alpha Vantage API key')
+    
+    args = parser.parse_args()
+    
+    # Initialize trading engine
+    engine = KLSETradingEngine(alpha_vantage_key=args.alpha_vantage_key)
+    
+    if args.action == 'daily':
+        # Execute daily processing
+        result = engine.execute_daily_processing()
+        
+        if result['status'] == 'success':
+            print("✅ Daily processing completed successfully")
+            
+            summary = result['summary']
+            print(f"📊 Total Equity: {summary['total_equity']:,.2f} MYR")
+            print(f"📈 Return: {summary['total_return_pct']:+.2f}%")
+            print(f"🏢 Positions: {summary['positions']}")
+            
+            if summary['stops_triggered'] > 0:
+                print(f"🚨 Stop Losses: {summary['stops_triggered']}")
+        else:
+            print(f"❌ Daily processing failed: {result}")
+    
+    elif args.action == 'report':
+        # Generate and display daily report
+        report = engine.generate_daily_report()
+        print(report)
+    
+    elif args.action == 'demo':
+        # Demo mode - add sample positions and run processing
+        print("🎯 KLSE Trading Engine Demo")
+        print("=" * 40)
+        
+        # Add sample positions
+        sample_stocks = [
+            {"ticker": "4723", "name": "JAKS Resources", "weight": 30.0, "sector": "Industrial"},
+            {"ticker": "0090", "name": "NetX Holdings", "weight": 25.0, "sector": "Technology"},
+            {"ticker": "0176", "name": "Fintec Global", "weight": 20.0, "sector": "Technology"},
+        ]
+        
+        print("\n🏗️ Adding sample positions...")
+        for stock in sample_stocks:
+            success = engine.add_new_position(
+                ticker=stock["ticker"],
+                target_weight_pct=stock["weight"],
+                company_name=stock["name"],
+                sector=stock["sector"]
+            )
+            
+            if success:
+                print(f"✅ Added {stock['name']} ({stock['ticker']}.KL)")
+            else:
+                print(f"❌ Failed to add {stock['name']}")
+        
+        print("\n📊 Processing daily update...")
+        result = engine.execute_daily_processing()
+        
+        print("\n📋 Final Report:")
+        print(engine.generate_daily_report())
+
+if __name__ == "__main__":
+    main()

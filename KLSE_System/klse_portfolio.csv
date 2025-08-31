@@ -1,0 +1,4 @@
+date_added,ticker,company_name,shares,avg_cost_myr,stop_loss_myr,sector,market_cap_myr,target_weight_pct
+2025-08-31,4723.KL,JAKS Resources,33300,0.09,0.076,Industrial,236364304,30.0
+2025-08-31,0090.KL,NetX Holdings,8700,0.285,0.242,Technology,192722704,25.0
+2025-08-31,0176.KL,Fintec Global,9500,0.21,0.178,Technology,186986720,20.0

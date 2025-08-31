@@ -1,0 +1,4 @@
+timestamp,date,action,ticker,shares,price_myr,total_value_myr,data_source,cash_after_myr
+2025-08-31T17:40:38.140682,2025-08-31,BUY,4723.KL,33300,0.09,2997.0,yfinance,7003.0
+2025-08-31T17:40:38.351728,2025-08-31,BUY,0090.KL,8700,0.285,2479.5,yfinance,4523.5
+2025-08-31T17:40:38.605027,2025-08-31,BUY,0176.KL,9500,0.21,1995.0,yfinance,2528.5
