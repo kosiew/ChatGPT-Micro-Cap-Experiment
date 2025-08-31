@@ -11,28 +11,85 @@ import os
 import sys
 import logging
 from typing import Dict, List, Optional
-import argparse
+import typer
+from rich.console import Console
+from rich.table import Table
+from rich import print as rich_print
 
 # Add parent directory for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import our portfolio manager and data fetcher
-try:
-    from KLSE_System.klse_portfolio_manager import KLSEPortfolioManager
-    from redundant_data_fetcher import KLSEDataFetcher
-    ENHANCED_AVAILABLE = True
-except ImportError as e:
-    print(f"⚠️  Import error: {e}")
-    print("   Falling back to basic functionality")
-    ENHANCED_AVAILABLE = False
+from klse_portfolio_manager import KLSEPortfolioManager
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+app = typer.Typer(help="🚀 KLSE Trading Engine")
+console = Console()
 
 class KLSETradingEngine:
-    """
-    Malaysian stock trading engine for automated portfolio management
+    def __init__(self):
+        self.portfolio_manager = KLSEPortfolioManager()
+        logger.info("KLSE Trading Engine initialized")
+    
+    def run_daily_update(self):
+        """Run daily portfolio update"""
+        try:
+            logger.info("Starting daily portfolio update...")
+            self.portfolio_manager.update_portfolio()
+            logger.info("✅ Daily update completed successfully")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Daily update failed: {e}")
+            return False
+    
+    def get_portfolio_summary(self):
+        """Get portfolio summary"""
+        return self.portfolio_manager.get_portfolio_summary()
+
+@app.command()
+def summary():
+    """📊 Display current portfolio summary"""
+    try:
+        engine = KLSETradingEngine()
+        summary = engine.get_portfolio_summary()
+        
+        console.print("\n[bold blue]📊 KLSE Portfolio Summary[/bold blue]")
+        console.print(f"💰 Total Equity: [green]{summary['total_equity']:,.2f} MYR[/green]")
+        console.print(f"💵 Cash Balance: [yellow]{summary['cash_balance']:,.2f} MYR[/yellow]")
+        console.print(f"📈 Total P&L: [{'green' if summary['total_pnl'] >= 0 else 'red'}]{summary['total_pnl']:+,.2f} MYR[/{'green' if summary['total_pnl'] >= 0 else 'red'}]")
+        console.print(f"📊 Return: [{'green' if summary['total_return'] >= 0 else 'red'}]{summary['total_return']:+.2f}%[/{'green' if summary['total_return'] >= 0 else 'red'}]")
+        
+        if summary['positions']:
+            console.print("\n[bold]📋 Current Positions:[/bold]")
+            for pos in summary['positions']:
+                pnl_symbol = "🟢" if pos['position_pnl'] >= 0 else "🔴"
+                console.print(f"   {pnl_symbol} [bold]{pos['ticker']}[/bold]: {pos['shares']} shares")
+                console.print(f"      Value: [green]{pos['position_value']:,.2f} MYR[/green]")
+                console.print(f"      PnL: [{'green' if pos['position_pnl'] >= 0 else 'red'}]{pos['position_pnl']:+,.2f} MYR ({pos['position_return_pct']:+.2f}%)[/{'green' if pos['position_pnl'] >= 0 else 'red'}]")
+    
+        # Display failed tickers if any
+        if 'failed_tickers' in summary and summary['failed_tickers']:
+            console.print(f"\n[bold red]⚠️  Failed to Get Price Data ({len(summary['failed_tickers'])} tickers):[/bold red]")
+            console.print("=" * 50)
+            for failed in summary['failed_tickers']:
+                console.print(f"   ❌ [bold]{failed['ticker']}[/bold] ({failed['company_name']})")
+                console.print(f"      Shares: {failed['shares']}")
+                console.print(f"      Cost Basis: {failed['avg_cost']:.3f} MYR")
+                console.print(f"      Sector: {failed['sector']}")
+                console.print(f"      Reason: {failed['reason']}")
+                console.print()
+            
+            console.print("💡 Investigation needed for these tickers:")
+            console.print("   • Check if companies are still listed")
+            console.print("   • Verify ticker symbols are correct")
+            console.print("   • Consider manual price updates or position removal")
+            console.print()
+    
+    except Exception as e:
+        console.print(f"[red]❌ Error getting portfolio summary: {e}[/red]")
+        logger.error(f"Portfolio summary failed: {e}")
+
+@app.command()
+def update():
+    """🔄 Run daily portfolio update"""
     """
     
     def __init__(self, alpha_vantage_key: str = None):
@@ -343,71 +400,173 @@ class KLSETradingEngine:
         
         return "\n".join(report)
 
-def main():
-    """Main trading script execution"""
-    parser = argparse.ArgumentParser(description='KLSE Trading Engine')
-    parser.add_argument('--action', choices=['daily', 'report', 'demo'], 
-                       default='daily', help='Action to perform')
-    parser.add_argument('--alpha-vantage-key', help='Alpha Vantage API key')
-    
-    args = parser.parse_args()
+@app.command("daily")
+def daily_processing(
+    alpha_vantage_key: Optional[str] = typer.Option(None, help="Alpha Vantage API key for data")
+):
+    """Execute daily portfolio processing and updates"""
+    print("🇲🇾 Starting KLSE daily processing...")
     
     # Initialize trading engine
-    engine = KLSETradingEngine(alpha_vantage_key=args.alpha_vantage_key)
+    engine = KLSETradingEngine(alpha_vantage_key=alpha_vantage_key)
     
-    if args.action == 'daily':
-        # Execute daily processing
-        result = engine.execute_daily_processing()
+    # Execute daily processing
+    result = engine.execute_daily_processing()
+    
+    if result['status'] == 'success':
+        print("✅ Daily processing completed successfully")
         
-        if result['status'] == 'success':
-            print("✅ Daily processing completed successfully")
-            
-            summary = result['summary']
-            print(f"📊 Total Equity: {summary['total_equity']:,.2f} MYR")
-            print(f"📈 Return: {summary['total_return_pct']:+.2f}%")
-            print(f"🏢 Positions: {summary['positions']}")
-            
-            if summary['stops_triggered'] > 0:
-                print(f"🚨 Stop Losses: {summary['stops_triggered']}")
+        summary = result['summary']
+        print(f"📊 Total Equity: {summary['total_equity']:,.2f} MYR")
+        print(f"📈 Return: {summary['total_return_pct']:+.2f}%")
+        print(f"🏢 Positions: {summary['positions']}")
+        
+        if summary['stops_triggered'] > 0:
+            print(f"🚨 Stop Losses: {summary['stops_triggered']}")
+    else:
+        print(f"❌ Daily processing failed: {result}")
+
+
+@app.command("report")
+def generate_report(
+    alpha_vantage_key: Optional[str] = typer.Option(None, help="Alpha Vantage API key for data")
+):
+    """Generate and display comprehensive daily trading report"""
+    print("📋 Generating KLSE trading report...")
+    
+    # Initialize trading engine
+    engine = KLSETradingEngine(alpha_vantage_key=alpha_vantage_key)
+    
+    # Generate and display report
+    report = engine.generate_daily_report()
+    print(report)
+
+
+@app.command("add")
+def add_position(
+    ticker: str = typer.Argument(..., help="Malaysian stock ticker (e.g., '1155' for Maybank)"),
+    weight: float = typer.Argument(..., help="Target weight as percentage (e.g., 20.0 for 20%)"),
+    stop_loss: float = typer.Option(15.0, help="Stop loss percentage below cost basis"),
+    company_name: str = typer.Option("", help="Company name for records"),
+    sector: str = typer.Option("", help="Business sector"),
+    alpha_vantage_key: Optional[str] = typer.Option(None, help="Alpha Vantage API key for data")
+):
+    """Add a new stock position to the portfolio"""
+    print(f"🎯 Adding new position: {ticker} ({weight}% target weight)")
+    
+    # Initialize trading engine
+    engine = KLSETradingEngine(alpha_vantage_key=alpha_vantage_key)
+    
+    # Add the position
+    success = engine.add_new_position(
+        ticker=ticker,
+        target_weight_pct=weight,
+        stop_loss_pct=stop_loss,
+        company_name=company_name,
+        sector=sector
+    )
+    
+    if success:
+        print(f"✅ Successfully added {ticker} to portfolio")
+        # Show updated summary
+        summary = engine.get_trading_summary()
+        print(f"📊 Available slots: {summary['available_position_slots']}/{summary['max_positions']}")
+    else:
+        print(f"❌ Failed to add {ticker}")
+
+
+@app.command("remove")
+def remove_position(
+    ticker: str = typer.Argument(..., help="Stock ticker to remove"),
+    reason: str = typer.Option("Manual sale", help="Reason for removing position"),
+    alpha_vantage_key: Optional[str] = typer.Option(None, help="Alpha Vantage API key for data")
+):
+    """Remove (sell) a stock position from the portfolio"""
+    print(f"🔄 Removing position: {ticker}")
+    
+    # Initialize trading engine
+    engine = KLSETradingEngine(alpha_vantage_key=alpha_vantage_key)
+    
+    # Remove the position
+    success = engine.remove_position(ticker=ticker, reason=reason)
+    
+    if success:
+        print(f"✅ Successfully removed {ticker} from portfolio")
+        # Show updated summary
+        summary = engine.get_trading_summary()
+        print(f"📊 Active positions: {summary['total_positions']}/{summary['max_positions']}")
+    else:
+        print(f"❌ Failed to remove {ticker}")
+
+
+@app.command("summary")
+def portfolio_summary(
+    alpha_vantage_key: Optional[str] = typer.Option(None, help="Alpha Vantage API key for data")
+):
+    """Show current portfolio summary and trading capacity"""
+    print("📊 KLSE Portfolio Summary")
+    
+    # Initialize trading engine
+    engine = KLSETradingEngine(alpha_vantage_key=alpha_vantage_key)
+    
+    # Get comprehensive summary
+    summary = engine.get_trading_summary()
+    
+    # Display summary
+    print(f"\n� Portfolio Value: {summary['total_equity']:,.2f} MYR")
+    print(f"💵 Cash Balance: {summary['cash_balance']:,.2f} MYR")
+    print(f"📈 Total Return: {summary['total_return_pct']:+.2f}%")
+    print(f"🏢 Active Positions: {summary['total_positions']}/{summary['max_positions']}")
+    print(f"📊 Available Slots: {summary['available_position_slots']}")
+    print(f"➕ Can Add Positions: {'✅ Yes' if summary['can_add_positions'] else '❌ No'}")
+    
+    if summary['positions']:
+        print("\n� Current Positions:")
+        for pos in summary['positions']:
+            pnl_symbol = "🟢" if pos['position_pnl'] >= 0 else "🔴"
+            print(f"   {pnl_symbol} {pos['ticker']}: {pos['shares']} shares")
+            print(f"      Value: {pos['position_value']:,.2f} MYR")
+            print(f"      PnL: {pos['position_pnl']:+,.2f} MYR ({pos['position_return_pct']:+.2f}%)")
+
+
+@app.command("demo")
+def demo_mode(
+    alpha_vantage_key: Optional[str] = typer.Option(None, help="Alpha Vantage API key for data")
+):
+    """Run demo mode with sample positions"""
+    print("🎯 KLSE Trading Engine Demo")
+    print("=" * 40)
+    
+    # Initialize trading engine
+    engine = KLSETradingEngine(alpha_vantage_key=alpha_vantage_key)
+    
+    # Add sample positions
+    sample_stocks = [
+        {"ticker": "4723", "name": "JAKS Resources", "weight": 30.0, "sector": "Industrial"},
+        {"ticker": "0090", "name": "NetX Holdings", "weight": 25.0, "sector": "Technology"},
+        {"ticker": "0176", "name": "Fintec Global", "weight": 20.0, "sector": "Technology"},
+    ]
+    
+    print("\n🏗️ Adding sample positions...")
+    for stock in sample_stocks:
+        success = engine.add_new_position(
+            ticker=stock["ticker"],
+            target_weight_pct=stock["weight"],
+            company_name=stock["name"],
+            sector=stock["sector"]
+        )
+        
+        if success:
+            print(f"✅ Added {stock['name']} ({stock['ticker']}.KL)")
         else:
-            print(f"❌ Daily processing failed: {result}")
+            print(f"❌ Failed to add {stock['name']}")
     
-    elif args.action == 'report':
-        # Generate and display daily report
-        report = engine.generate_daily_report()
-        print(report)
+    print("\n📊 Processing daily update...")
+    result = engine.execute_daily_processing()
     
-    elif args.action == 'demo':
-        # Demo mode - add sample positions and run processing
-        print("🎯 KLSE Trading Engine Demo")
-        print("=" * 40)
-        
-        # Add sample positions
-        sample_stocks = [
-            {"ticker": "4723", "name": "JAKS Resources", "weight": 30.0, "sector": "Industrial"},
-            {"ticker": "0090", "name": "NetX Holdings", "weight": 25.0, "sector": "Technology"},
-            {"ticker": "0176", "name": "Fintec Global", "weight": 20.0, "sector": "Technology"},
-        ]
-        
-        print("\n🏗️ Adding sample positions...")
-        for stock in sample_stocks:
-            success = engine.add_new_position(
-                ticker=stock["ticker"],
-                target_weight_pct=stock["weight"],
-                company_name=stock["name"],
-                sector=stock["sector"]
-            )
-            
-            if success:
-                print(f"✅ Added {stock['name']} ({stock['ticker']}.KL)")
-            else:
-                print(f"❌ Failed to add {stock['name']}")
-        
-        print("\n📊 Processing daily update...")
-        result = engine.execute_daily_processing()
-        
-        print("\n📋 Final Report:")
-        print(engine.generate_daily_report())
+    print("\n📋 Final Report:")
+    print(engine.generate_daily_report())
+
 
 if __name__ == "__main__":
-    main()
+    app()

@@ -408,10 +408,12 @@ class KLSEPortfolioManager:
                 'total_positions': 0,
                 'total_equity': self.current_cash_myr,
                 'cash_balance': self.current_cash_myr,
-                'total_return_pct': 0.0
+                'total_return_pct': 0.0,
+                'failed_tickers': []
             }
-        
+
         positions = []
+        failed_tickers = []
         total_value = 0
         
         for _, position in self.portfolio.iterrows():
@@ -436,10 +438,21 @@ class KLSEPortfolioManager:
                     'stop_loss': position['stop_loss_myr'],
                     'sector': position['sector']
                 })
-        
+            else:
+                # Track failed ticker
+                failed_tickers.append({
+                    'ticker': position['ticker'],
+                    'company_name': position['company_name'],
+                    'shares': position['shares'],
+                    'avg_cost': position['avg_cost_myr'],
+                    'sector': position['sector'],
+                    'reason': 'Price data unavailable'
+                })
+                logger.warning(f"❌ Failed to get price data for {position['ticker']} ({position['company_name']})")
+
         total_equity = total_value + self.current_cash_myr
         total_return_pct = ((total_equity - self.starting_cash_myr) / self.starting_cash_myr) * 100
-        
+
         return {
             'total_positions': len(positions),
             'total_stock_value': total_value,
@@ -447,6 +460,7 @@ class KLSEPortfolioManager:
             'total_equity': total_equity,
             'total_return_pct': total_return_pct,
             'positions': positions,
+            'failed_tickers': failed_tickers,
             'market_status': self.get_market_status()
         }
 
