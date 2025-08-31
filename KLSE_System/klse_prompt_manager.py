@@ -1,265 +1,416 @@
 #!/usr/bin/env python3
 """
-KLSE Prompt Integration Guide
-How to use Malaysian-focused AI prompts with the KLSE trading system
+KLSE Prompt Manager - Enhanced
+Generates trading prompts for KLSE micro-cap trading system
 """
 
 import os
 import json
+import typer
+from rich.console import Console
+from rich.panel import Panel
+from typing import Optional
 from datetime import datetime
-from typing import Dict, List
+import pandas as pd
+
+app = typer.Typer()
+console = Console()
 
 class KLSEPromptManager:
-    """
-    Manage Malaysian market-focused AI prompts for KLSE trading decisions
-    """
+    def __init__(self, config_path: str = "klse_config.json"):
+        self.config_path = config_path
+        self.config = self.load_config()
+        
+    def load_config(self) -> dict:
+        """Load configuration from JSON file"""
+        if os.path.exists(self.config_path):
+            with open(self.config_path, 'r') as f:
+                return json.load(f)
+        return self.get_default_config()
     
-    def __init__(self):
-        self.prompts_file = "KLSE_System/KLSE_Market_Prompts.md"
-        self.portfolio_file = "KLSE_System/klse_portfolio.csv"
-        self.daily_updates_file = "KLSE_System/klse_daily_updates.csv"
-        
-    def generate_current_context(self) -> Dict[str, any]:
-        """Generate current portfolio context for AI prompts"""
-        import pandas as pd
-        
-        context = {
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "portfolio_holdings": {},
-            "cash_balance_myr": 0,
-            "total_equity_myr": 0,
-            "current_return_pct": 0,
-            "positions_count": 0,
-            "available_slots": 10
+    def get_default_config(self) -> dict:
+        """Return default configuration"""
+        return {
+            "portfolio": {
+                "starting_capital": 5000,
+                "currency": "MYR",
+                "market": "KLSE",
+                "max_positions": 8,
+                "position_sizing": "equal_weight"
+            },
+            "risk_management": {
+                "max_position_size": 0.20,
+                "stop_loss_percentage": 0.15,
+                "max_daily_loss": 0.05
+            },
+            "trading_rules": {
+                "market_cap_limit": 500000000,
+                "minimum_volume": 50000,
+                "sectors_excluded": ["REIT"]
+            }
+        }
+    
+    def get_portfolio_status(self) -> dict:
+        """Get current portfolio status from CSV files"""
+        portfolio_data = {
+            "total_equity": 5000,  # Default
+            "current_positions": 0,
+            "cash_balance": 5000,
+            "recent_trades": []
         }
         
-        # Load portfolio data if available
-        if os.path.exists(self.portfolio_file):
-            portfolio_df = pd.read_csv(self.portfolio_file)
-            
-            if not portfolio_df.empty:
-                context["positions_count"] = len(portfolio_df)
-                context["available_slots"] = 10 - len(portfolio_df)
+        # Try to read current portfolio
+        try:
+            if os.path.exists("klse_portfolio.csv"):
+                df = pd.read_csv("klse_portfolio.csv")
+                if not df.empty:
+                    latest_row = df.iloc[-1]
+                    portfolio_data["total_equity"] = latest_row.get("Total_Equity", 5000)
+                    portfolio_data["cash_balance"] = latest_row.get("Cash_Balance", 5000)
+                    
+            # Count current positions
+            if os.path.exists("klse_portfolio.csv"):
+                df = pd.read_csv("klse_portfolio.csv")
+                current_positions = df[df["Shares"] > 0] if not df.empty else pd.DataFrame()
+                portfolio_data["current_positions"] = len(current_positions)
                 
-                # Create holdings dictionary
-                for _, row in portfolio_df.iterrows():
-                    context["portfolio_holdings"][row["ticker"]] = {
-                        "shares": row["shares"],
-                        "avg_cost": row["avg_cost_myr"],
-                        "company_name": row["company_name"],
-                        "sector": row["sector"],
-                        "stop_loss": row["stop_loss_myr"]
-                    }
-        
-        # Load latest performance data
-        if os.path.exists(self.daily_updates_file):
-            daily_df = pd.read_csv(self.daily_updates_file)
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not read portfolio data: {e}[/yellow]")
             
-            if not daily_df.empty:
-                latest = daily_df.iloc[-1]
-                context["cash_balance_myr"] = latest.get("cash_balance_myr", 0)
-                context["total_equity_myr"] = latest.get("total_equity_myr", 0)
-                context["current_return_pct"] = latest.get("total_return_pct", 0)
-        
-        return context
+        return portfolio_data
     
-    def format_starting_prompt(self) -> str:
-        """Format the initial Malaysian market research prompt"""
-        context = self.generate_current_context()
+    def generate_weekly_evaluation_prompt(self) -> str:
+        """Generate weekly portfolio evaluation prompt"""
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        portfolio_status = self.get_portfolio_status()
         
-        # Use actual portfolio value, fallback to 203,889 MYR if not available
-        portfolio_value = context['total_equity_myr'] if context['total_equity_myr'] > 0 else 203889
-        
-        prompt = f"""You are a professional-grade portfolio strategist specializing in the Malaysian equity market. I have exactly {portfolio_value:,.0f} MYR as my current portfolio value and I want you to build the strongest possible stock portfolio using only board lot positions (100-share multiples) in KLSE-listed micro-cap stocks (market cap under 300 million MYR).
+        prompt = f"""
+# KLSE Micro-Cap Weekly Portfolio Evaluation - {current_date}
 
-Your objective is to generate maximum return over the next 6 months, operating within Malaysian market regulations and dynamics.
+## Portfolio Performance Review
 
-MALAYSIAN MARKET CONSTRAINTS:
-- All positions must be in 100-share board lots (Bursa Malaysia standard)
-- Focus on stocks listed on Main Market or ACE Market with market cap < 300M MYR
-- Consider Malaysian trading hours (9:00 AM - 5:00 PM, GMT+8)
-- Account for Malaysian public holidays and trading suspensions
-- Minimum investment consideration for liquidity (typically 50,000 MYR+ daily volume)
+### Current Portfolio Status:
+- Total Equity: MYR {portfolio_status['total_equity']:,.2f}
+- Active Positions: {portfolio_status['current_positions']}
+- Cash Balance: MYR {portfolio_status['cash_balance']:,.2f}
+- Maximum Positions Allowed: {self.config['portfolio']['max_positions']}
 
-CURRENT PORTFOLIO STATUS:
-- Total Portfolio Value: {portfolio_value:,.0f} MYR
-- Cash Available: {context['cash_balance_myr']:,.0f} MYR
-- Active Positions: {context['positions_count']}/{context['available_slots'] + context['positions_count']}
-- Current Holdings: {json.dumps(context['portfolio_holdings'], indent=2) if context['portfolio_holdings'] else 'None'}
+### Weekly Evaluation Tasks:
 
-CURRENT PORTFOLIO STATUS:
-- Available Cash: {context['cash_balance_myr']:,.2f} MYR
-- Current Positions: {context['positions_count']}/10 slots used
-- Portfolio Return: {context['current_return_pct']:+.2f}%
-- Total Equity: {context['total_equity_myr']:,.2f} MYR
+#### 1. Performance Analysis
+- Calculate weekly returns vs KLCI benchmark
+- Analyze individual position performance
+- Identify best and worst performing stocks
+- Review stop-loss triggers and exits
 
-MALAYSIAN ECONOMIC FOCUS AREAS:
-- Digital economy initiatives and Industry 4.0 adoption
-- ESG compliance and sustainability trends in Malaysia
-- Government infrastructure spending beneficiaries
-- Export potential to China, ASEAN, and key trading partners
-- Small-cap companies with strong fundamentals but limited analyst coverage
+#### 2. Risk Assessment
+- Current portfolio concentration
+- Sector allocation review
+- Position sizing analysis
+- Risk-adjusted returns evaluation
 
-Research and create your optimal Malaysian micro-cap portfolio."""
-        
-        return prompt
-    
-    def format_weekly_reevaluation(self, previous_thesis: str = "") -> str:
-        """Format weekly reevaluation prompt for Malaysian market"""
-        context = self.generate_current_context()
-        
-        # Use actual portfolio value, fallback to 203,889 MYR if not available
-        portfolio_value = context['total_equity_myr'] if context['total_equity_myr'] > 0 else 203889
-        
-        prompt = f"""MALAYSIAN MARKET WEEKLY PORTFOLIO REVIEW
+#### 3. Market Review
+- KLSE market sentiment this week
+- Micro-cap sector trends
+- Economic indicators impact
+- Currency (MYR) strength assessment
 
-Reevaluate your Malaysian micro-cap portfolio based on latest KLSE market developments and Malaysian economic indicators. 
+#### 4. Position Management
+- Review existing holdings fundamentals
+- Assess stop-loss levels
+- Consider position adjustments
+- Identify underperforming assets
 
-CURRENT PORTFOLIO STATUS:
-- Total Portfolio Value: {portfolio_value:,.0f} MYR
-- Cash Available: {context['cash_balance_myr']:,.0f} MYR  
-- Active Positions: {context['positions_count']}/{context['available_slots'] + context['positions_count']}
-- Current Performance: {context['current_return_pct']:+.2f}%
+#### 5. Strategic Planning
+- Market outlook for next week
+- Potential new opportunities
+- Sector rotation considerations
+- Risk management adjustments
 
-HOLDINGS:"""
-        
-        for ticker, details in context['portfolio_holdings'].items():
-            prompt += f"""
-- {ticker}: {details['shares']} shares @ {details['avg_cost']:.3f} MYR
-  Company: {details['company_name']} | Sector: {details['sector']}"""
-        
-        prompt += f"""
+### Action Items:
+1. Provide detailed analysis of current positions
+2. Recommend any position adjustments
+3. Suggest new micro-cap opportunities if applicable
+4. Update stop-loss levels if needed
+5. Outline strategy for upcoming week
 
-MALAYSIAN MARKET FACTORS TO ANALYZE:
-- Recent government policy announcements affecting your sectors
-- KLCI and FBM Small Cap Index performance trends  
-- MYR exchange rate movements and sector impacts
-- Bursa Malaysia regulatory changes or announcements
-- Corporate earnings season results for Malaysian companies
-- Regional ASEAN market developments
+### Risk Parameters:
+- Market Cap Limit: MYR {self.config['trading_rules']['market_cap_limit']:,}
+- Max Position Size: {self.config['risk_management']['max_position_size']*100}%
+- Stop-Loss: {self.config['risk_management']['stop_loss_percentage']*100}%
 
-PREVIOUS THESIS: {previous_thesis}
-
-Research current Malaysian market conditions and decide on any portfolio adjustments. Focus on Malaysian micro-caps only, considering board lot requirements and local market dynamics."""
-        
-        return prompt
-    
-    def format_deep_research_prompt(self, last_thesis: str = "") -> str:
-        """Format deep research prompt for Malaysian market analysis"""
-        context = self.generate_current_context()
-        
-        # Use actual portfolio value, fallback to 203,889 MYR if not available
-        portfolio_value = context['total_equity_myr'] if context['total_equity_myr'] > 0 else 203889
-        available_cash = context['cash_balance_myr'] if context['cash_balance_myr'] > 0 else 0
-        
-        prompt = f"""MALAYSIAN MICRO-CAP DEEP RESEARCH SESSION
-
-You are a professional portfolio analyst specializing in Malaysian equity markets. Use deep research to reevaluate your KLSE micro-cap portfolio.
-
-PORTFOLIO STATUS:
-- Total Portfolio Value: {portfolio_value:,.0f} MYR
-- Available Cash: {available_cash:,.0f} MYR
-- Current Positions: {context['positions_count']}/10 slots
-- Current Return vs KLCI: {context['current_return_pct']:+.2f}%
-
-MALAYSIAN MARKET RESEARCH REQUIREMENTS:
-- Analyze holdings using Malaysian-specific metrics and benchmarks
-- Research new Malaysian micro-cap opportunities (< 300M MYR market cap)
-- Consider Malaysian market seasonality and economic cycles
-- Evaluate government policy impacts on target sectors
-- Assess MYR currency trends and portfolio implications
-
-RESEARCH FOCUS AREAS:
-- Bursa Malaysia announcements and company filings
-- Malaysian economic data and BNM monetary policy
-- Securities Commission Malaysia regulatory updates
-- Local Malaysian financial news and analyst coverage
-- Regional ASEAN economic developments
-
-PREVIOUS THESIS: {last_thesis}
-
-OBJECTIVE: Generate alpha in Malaysian micro-cap space through local market expertise.
-
-Provide portfolio recommendations and new thesis summary for next week."""
-        
-        return prompt
-    
-    def get_malaysian_market_guidelines(self) -> str:
-        """Get Malaysian market-specific trading guidelines"""
-        return """
-MALAYSIAN MARKET TRADING GUIDELINES:
-
-REGULATORY REQUIREMENTS:
-- Board lots: 100-share minimum increments
-- Disclosure threshold: 5% ownership requires announcement
-- Settlement: T+2 cycle
-- Trading hours: 9:00 AM - 5:00 PM (GMT+8) with lunch break
-
-MARKET STRUCTURE:
-- Main Market: Larger, more established companies
-- ACE Market: Smaller, growth companies (our focus area)
-- Foreign ownership limits may apply to certain sectors
-
-SECTOR DYNAMICS:
-- Plantation: Palm oil price sensitive, weather dependent
-- Banking: Interest rate and BNM policy sensitive  
-- Technology: Government digitalization beneficiary
-- Healthcare: Aging population and medical tourism themes
-- Industrial: Infrastructure spending and export manufacturing
-
-RISK FACTORS:
-- Currency: MYR volatility vs major currencies
-- Liquidity: Lower volume in micro-cap space
-- Regulatory: SC Malaysia policy changes
-- Economic: Government fiscal policy impacts
-- Regional: ASEAN economic integration effects
-
-OPPORTUNITIES:
-- Undervalued small-caps with limited analyst coverage
-- Digital transformation beneficiaries
-- ESG compliance leaders
-- Export-oriented manufacturers
-- Government infrastructure spending beneficiaries
+---
+*Weekly Evaluation Generated: {current_date}*
         """
+        return prompt.strip()
+    
+    def generate_deep_research_prompt(self) -> str:
+        """Generate deep research prompt for new opportunities"""
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        portfolio_status = self.get_portfolio_status()
+        
+        prompt = f"""
+# KLSE Micro-Cap Deep Research Analysis - {current_date}
 
-def demo_prompt_usage():
-    """Demonstrate how to use Malaysian-focused prompts"""
-    print("🇲🇾 KLSE AI PROMPT SYSTEM DEMO")
-    print("=" * 50)
+## Research Objective
+Conduct comprehensive analysis to identify high-potential micro-cap opportunities on Bursa Malaysia.
+
+### Current Portfolio Context:
+- Available Cash: MYR {portfolio_status['cash_balance']:,.2f}
+- Current Positions: {portfolio_status['current_positions']}/{self.config['portfolio']['max_positions']}
+- Total Equity: MYR {portfolio_status['total_equity']:,.2f}
+
+## Deep Research Framework:
+
+### 1. Market Screening
+**Criteria:**
+- Market Cap: < MYR {self.config['trading_rules']['market_cap_limit']:,}
+- Daily Volume: > {self.config['trading_rules']['minimum_volume']:,} shares
+- Exclude Sectors: {', '.join(self.config['trading_rules']['sectors_excluded'])}
+
+### 2. Fundamental Analysis
+**Key Metrics to Research:**
+- Revenue growth trends (3-year)
+- Profit margins and ROE
+- Debt-to-equity ratios
+- Cash flow generation
+- Book value vs market value
+- Dividend history and sustainability
+
+### 3. Business Quality Assessment
+**Evaluate:**
+- Management track record
+- Competitive advantages/moats
+- Industry position and market share
+- Business model sustainability
+- ESG considerations
+- Corporate governance quality
+
+### 4. Technical Analysis
+**Chart Patterns:**
+- Support and resistance levels
+- Volume trends
+- Moving average analysis
+- RSI and momentum indicators
+- Breakout patterns
+
+### 5. Catalysts Identification
+**Look for:**
+- Upcoming earnings releases
+- New contract announcements
+- Expansion plans or capex
+- Regulatory changes impact
+- Industry tailwinds
+- Merger & acquisition potential
+
+### 6. Risk Assessment
+**Evaluate:**
+- Liquidity risks
+- Key man dependencies
+- Regulatory risks
+- Market concentration
+- Currency exposure
+- Cyclical sensitivity
+
+### 7. Valuation Analysis
+**Methods:**
+- P/E ratios vs peers
+- P/B ratios analysis
+- EV/EBITDA multiples
+- DCF modeling (if applicable)
+- Asset-based valuation
+- Sum-of-parts analysis
+
+## Research Deliverables:
+1. **Top 3-5 stock recommendations** with detailed analysis
+2. **Entry price targets** and rationale
+3. **Stop-loss levels** for each recommendation
+4. **Position sizing** suggestions
+5. **Investment thesis** for each stock (2-3 paragraphs)
+6. **Risk factors** and mitigation strategies
+7. **Expected timeline** for thesis to play out
+
+## Research Sources to Consider:
+- Bursa Malaysia announcements
+- Company annual reports and quarterly results
+- Industry research reports
+- Broker research (if available)
+- Economic indicators and trends
+- Peer company analysis
+
+### Target Sectors for Research:
+- Technology and fintech
+- Healthcare and pharmaceuticals
+- Consumer goods and services
+- Industrial products and services
+- Plantation and agriculture
+- Construction and property development
+
+---
+*Deep Research Session: {current_date}*
+        """
+        return prompt.strip()
     
-    prompt_manager = KLSEPromptManager()
+    def generate_starting_prompt(self) -> str:
+        """Generate initial trading system prompt"""
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        
+        prompt = f"""
+# KLSE Micro-Cap Trading System - Initial Setup - {current_date}
+
+## Welcome to KLSE Micro-Cap Trading
+
+You are now managing a systematic micro-cap trading portfolio focused on Bursa Malaysia (KLSE). This is the beginning of your trading journey.
+
+### Portfolio Initialization:
+- **Starting Capital**: MYR {self.config['portfolio']['starting_capital']:,}
+- **Trading Universe**: KLSE micro-cap stocks
+- **Investment Horizon**: Medium to long-term value investing
+- **Maximum Positions**: {self.config['portfolio']['max_positions']} stocks
+
+## Trading System Framework:
+
+### 1. Investment Philosophy
+- **Value-Oriented Approach**: Focus on undervalued micro-cap companies
+- **Quality Bias**: Prefer companies with solid fundamentals
+- **Catalyst-Driven**: Look for specific events that can unlock value
+- **Risk-Conscious**: Emphasize capital preservation
+
+### 2. Stock Selection Criteria
+**Mandatory Requirements:**
+- Market Cap: < MYR {self.config['trading_rules']['market_cap_limit']:,} million
+- Minimum Daily Volume: {self.config['trading_rules']['minimum_volume']:,} shares
+- Listed on Main Board or ACE Market
+- Exclude: {', '.join(self.config['trading_rules']['sectors_excluded'])} sectors
+
+**Preferred Characteristics:**
+- Profitable companies with consistent earnings
+- Strong balance sheets (low debt)
+- Experienced management teams
+- Growing or stable industries
+- Reasonable valuations (P/E < 15, P/B < 2)
+
+### 3. Risk Management Rules
+- **Position Sizing**: Equal weight approach (~12.5% per position)
+- **Maximum Position**: {self.config['risk_management']['max_position_size']*100}% of portfolio
+- **Stop-Loss**: {self.config['risk_management']['stop_loss_percentage']*100}% below purchase price
+- **Daily Loss Limit**: {self.config['risk_management']['max_daily_loss']*100}% of portfolio value
+- **Diversification**: No more than 2 stocks per sector
+
+### 4. Trading Workflow
+**Weekly Process:**
+1. Market and economic review
+2. Portfolio performance evaluation
+3. Individual stock monitoring
+4. New opportunity research
+5. Position adjustments if needed
+
+**Monthly Deep Dive:**
+- Comprehensive fundamental research
+- Industry analysis and trends
+- New stock discovery
+- Strategy refinement
+
+### 5. Performance Benchmarks
+- **Primary**: KLCI (FTSE Bursa Malaysia KLCI)
+- **Secondary**: Small-cap indices
+- **Target**: Outperform benchmarks with lower volatility
+- **Risk Metric**: Maximum drawdown < 20%
+
+## Initial Action Plan:
+
+### Phase 1: Market Research (Week 1-2)
+1. Conduct comprehensive micro-cap screening
+2. Identify 15-20 potential candidates
+3. Perform fundamental analysis
+4. Create watchlist with entry targets
+
+### Phase 2: Initial Positioning (Week 3-4)
+1. Start with 3-4 high-conviction positions
+2. Equal weight allocation
+3. Set stop-loss levels
+4. Monitor market conditions
+
+### Phase 3: Portfolio Build-out (Month 2-3)
+1. Gradually add positions (1-2 per month)
+2. Reach target of 6-8 positions
+3. Maintain diversification
+4. Adjust based on performance
+
+## Market Context (Malaysia):
+- **Economic Environment**: [Current GDP growth, inflation, interest rates]
+- **Currency**: MYR strength vs USD, regional currencies
+- **Sector Trends**: Technology adoption, ESG focus, infrastructure development
+- **Regulatory**: Capital market reforms, foreign investment rules
+
+## Success Metrics:
+- **Annual Return Target**: 12-15% (beating KLCI)
+- **Sharpe Ratio**: > 0.8
+- **Maximum Drawdown**: < 15%
+- **Win Rate**: > 60% of positions profitable
+
+## Next Steps:
+1. Begin comprehensive market screening
+2. Research top 10 micro-cap opportunities
+3. Prepare detailed investment thesis for each
+4. Create initial portfolio allocation plan
+5. Set up monitoring and evaluation schedule
+
+---
+*Trading System Initialized: {current_date}*
+*Ready to begin systematic micro-cap investing on KLSE*
+        """
+        return prompt.strip()
+
+@app.command()
+def weekly():
+    """Generate weekly portfolio evaluation prompt"""
+    manager = KLSEPromptManager()
+    prompt = manager.generate_weekly_evaluation_prompt()
     
-    # Generate context
-    context = prompt_manager.generate_current_context()
-    print(f"📊 Current Portfolio Context:")
-    print(f"   Total Equity: {context['total_equity_myr']:,.2f} MYR")
-    print(f"   Cash Available: {context['cash_balance_myr']:,.2f} MYR")
-    print(f"   Current Return: {context['current_return_pct']:+.2f}%")
-    print(f"   Positions: {context['positions_count']}/10")
+    console.print(Panel(
+        prompt,
+        title="📊 KLSE Weekly Evaluation Prompt",
+        border_style="green"
+    ))
+
+@app.command()
+def research():
+    """Generate deep research prompt for new opportunities"""
+    manager = KLSEPromptManager()
+    prompt = manager.generate_deep_research_prompt()
     
-    # Show sample prompts
-    print(f"\n🎯 Sample Malaysian Market Prompts:")
-    print(f"\n1. STARTING RESEARCH PROMPT:")
-    print("-" * 40)
-    starting_prompt = prompt_manager.format_starting_prompt()
-    print(starting_prompt[:500] + "...")
+    console.print(Panel(
+        prompt,
+        title="🔬 KLSE Deep Research Prompt",
+        border_style="blue"
+    ))
+
+@app.command()
+def start():
+    """Generate starting/initialization prompt"""
+    manager = KLSEPromptManager()
+    prompt = manager.generate_starting_prompt()
     
-    print(f"\n2. WEEKLY REVIEW PROMPT:")
-    print("-" * 40)
-    weekly_prompt = prompt_manager.format_weekly_review_prompt(2, "Focus on technology and healthcare micro-caps")
-    print(weekly_prompt[:500] + "...")
+    console.print(Panel(
+        prompt,
+        title="🚀 KLSE Starting Prompt",
+        border_style="magenta"
+    ))
+
+@app.command()
+def demo():
+    """Generate a demo trading prompt (legacy)"""
+    manager = KLSEPromptManager()
     
-    print(f"\n3. DEEP RESEARCH PROMPT:")
-    print("-" * 40)
-    research_prompt = prompt_manager.format_deep_research_prompt(2500.0, "Malaysian digital economy beneficiaries")
-    print(research_prompt[:500] + "...")
+    # Use the weekly evaluation as demo for now
+    prompt = manager.generate_weekly_evaluation_prompt()
     
-    print(f"\n📋 Malaysian Market Guidelines:")
-    print("-" * 40)
-    guidelines = prompt_manager.get_malaysian_market_guidelines()
-    print(guidelines[:500] + "...")
-    
-    print(f"\n✅ Malaysian-focused AI prompts ready for use!")
+    console.print(Panel(
+        prompt,
+        title="🇲🇾 KLSE Demo Trading Prompt",
+        border_style="yellow"
+    ))
 
 if __name__ == "__main__":
-    demo_prompt_usage()
+    app()
