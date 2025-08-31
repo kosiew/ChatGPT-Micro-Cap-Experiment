@@ -60,6 +60,9 @@ class KLSEDataFetcher:
             Dict with price data or None if all sources fail
         """
         
+        # Convert ticker to string if it's not already
+        ticker = str(ticker)
+        
         # Ensure .KL suffix for Malaysian stocks
         klse_ticker = f"{ticker}.KL" if not ticker.endswith('.KL') else ticker
         

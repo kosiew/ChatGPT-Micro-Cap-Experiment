@@ -1,18 +1,14 @@
 stock_code,ticker,company_name,sector,subsector,current_price,market_cap_myr,avg_volume,is_microcap,meets_criteria,currency,last_updated,data_source
-0090,0090.KL,NetX Holdings,Technology,Software,0.285,192722704,224200,True,True,MYR,2025-08-31T17:44:37.705979,yfinance
-0176,0176.KL,Fintec Global,Technology,Software,0.21,186986720,807900,True,True,MYR,2025-08-31T17:44:37.967236,yfinance
-0066,0066.KL,PUC Berhad,Technology,Telecommunications,0.04,19890040,1816600,False,False,MYR,2025-08-31T17:44:38.263363,yfinance
-5027,5027.KL,Genetec Technology,Technology,Hardware,2.3,2259501568,36400,False,False,MYR,2025-08-31T17:44:38.606119,yfinance
-4723,4723.KL,JAKS Resources,Industrial,Construction,0.09,236364304,1593400,True,True,MYR,2025-08-31T17:44:38.897359,yfinance
-7204,7204.KL,Zecon Berhad,Industrial,Construction,1.33,1648508544,2390800,False,False,MYR,2025-08-31T17:44:39.188166,yfinance
-5284,5284.KL,Pohuat Berhad,Industrial,Manufacturing,0.535,1218494720,5036000,False,False,MYR,2025-08-31T17:44:39.508689,yfinance
-7157,7157.KL,MKH Berhad,Industrial,Engineering,0.305,30500000,152900,False,False,MYR,2025-08-31T17:44:39.866610,yfinance
-3816,3816.KL,Luxchem Corporation,Consumer,Consumer Goods,7.42,33121026048,2793600,False,False,MYR,2025-08-31T17:44:40.231070,yfinance
-7943,7943.KL,Trive Property Group,Consumer,Retail,0.1,89847200,119500,True,True,MYR,2025-08-31T17:44:40.533518,yfinance
-5230,5230.KL,Lebtech Berhad,Consumer,Food & Beverage,0.35,263774352,3888000,True,True,MYR,2025-08-31T17:44:40.850808,yfinance
-5161,5161.KL,Poh Huat Resources,Materials,Manufacturing,0.29,618422080,2663100,False,False,MYR,2025-08-31T17:44:41.141131,yfinance
-7595,7595.KL,Vsolar Group,Materials,Manufacturing,0.49,289909984,33000,True,True,MYR,2025-08-31T17:44:41.475806,yfinance
-7078,7078.KL,Careplus Group,Healthcare,Healthcare Services,0.245,160739120,577600,True,True,MYR,2025-08-31T17:44:41.832390,yfinance
-0167,0167.KL,Pharmaniaga,Healthcare,Pharmaceuticals,0.3,73863904,3146100,True,True,MYR,2025-08-31T17:44:42.137754,yfinance
-5166,5166.KL,Sealink International,Energy,Oil & Gas,0.795,135487872,0,False,False,MYR,2025-08-31T17:44:42.430802,yfinance
-5249,5249.KL,Reach Energy,Energy,Renewable Energy,2.23,12278714368,3820700,False,False,MYR,2025-08-31T17:44:42.747325,yfinance
+5027,5027.KL,Genetec Technology,Technology,Hardware,2.3,2259501568,36400,False,False,MYR,2025-08-31T23:35:31.667173,yfinance
+4723,4723.KL,JAKS Resources,Industrial,Construction,0.09,236364304,1593400,True,True,MYR,2025-08-31T23:35:31.961913,yfinance
+7204,7204.KL,Zecon Berhad,Industrial,Construction,1.33,1648508544,2390800,False,False,MYR,2025-08-31T23:35:32.241519,yfinance
+5284,5284.KL,Pohuat Berhad,Industrial,Manufacturing,0.535,1218494720,5036000,False,False,MYR,2025-08-31T23:35:32.506131,yfinance
+7157,7157.KL,MKH Berhad,Industrial,Engineering,0.305,30500000,152900,False,False,MYR,2025-08-31T23:35:32.798750,yfinance
+3816,3816.KL,Luxchem Corporation,Consumer,Consumer Goods,7.42,33121026048,2793600,False,False,MYR,2025-08-31T23:35:33.114025,yfinance
+7943,7943.KL,Trive Property Group,Consumer,Retail,0.1,89847200,119500,True,True,MYR,2025-08-31T23:35:33.367634,yfinance
+5230,5230.KL,Lebtech Berhad,Consumer,Food & Beverage,0.35,263774352,3888000,True,True,MYR,2025-08-31T23:35:33.642804,yfinance
+5161,5161.KL,Poh Huat Resources,Materials,Manufacturing,0.29,618422080,2663100,False,False,MYR,2025-08-31T23:35:33.914172,yfinance
+7595,7595.KL,Vsolar Group,Materials,Manufacturing,0.49,289909984,33000,True,True,MYR,2025-08-31T23:35:34.210044,yfinance
+7078,7078.KL,Careplus Group,Healthcare,Healthcare Services,0.245,160739120,577600,True,True,MYR,2025-08-31T23:35:34.493213,yfinance
+5166,5166.KL,Sealink International,Energy,Oil & Gas,0.795,135487872,0,False,False,MYR,2025-08-31T23:35:34.740626,yfinance
+5249,5249.KL,Reach Energy,Energy,Renewable Energy,2.23,12278714368,3820700,False,False,MYR,2025-08-31T23:35:35.012875,yfinance
