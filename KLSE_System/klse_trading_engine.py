@@ -372,7 +372,7 @@ class KLSETradingEngine:
         
         return True
     
-    def sell_shares(self, ticker: str, shares: int, reason: str = "Manual sale") -> bool:
+    def sell_shares(self, ticker: str, shares: int, reason: str = "Manual sale") -> dict:
         """
         Sell a specific number of shares from a position
         
@@ -380,6 +380,9 @@ class KLSETradingEngine:
             ticker: Stock ticker to sell (can be name like "gamuda" or code like "5398.KL")
             shares: Number of shares to sell
             reason: Reason for sale
+            
+        Returns:
+            Dictionary with sale details or None if failed
         """
         # Convert ticker to yfinance format if needed
         if not ticker.endswith('.KL') and not ticker.isdigit():
@@ -387,7 +390,7 @@ class KLSETradingEngine:
             yf_ticker, _, _ = self._get_ticker_and_company_info(ticker)
             if not yf_ticker:
                 logger.error(f"Could not convert ticker: {ticker}")
-                return False
+                return None
             ticker = yf_ticker
         elif ticker.isdigit():
             # It's a numeric code, add .KL suffix
@@ -399,24 +402,24 @@ class KLSETradingEngine:
         
         if not position_mask.any():
             logger.error(f"Position {ticker} not found in portfolio")
-            return False
+            return None
         
         position = self.portfolio_manager.portfolio[position_mask].iloc[0]
         current_shares = position['shares']
         
         if shares > current_shares:
             logger.error(f"Cannot sell {shares} shares of {ticker} - only have {current_shares} shares")
-            return False
+            return None
         
         if shares <= 0:
             logger.error(f"Invalid number of shares to sell: {shares}")
-            return False
+            return None
         
         # Get current price
         stock_data = self.portfolio_manager._get_stock_data(ticker)
         if not stock_data:
             logger.error(f"Cannot get current price for {ticker}")
-            return False
+            return None
         
         current_price = stock_data['price']
         sale_value = current_price * shares
@@ -431,13 +434,13 @@ class KLSETradingEngine:
         )
         
         # Update the position (reduce shares or remove completely)
+        remaining_shares = current_shares - shares
         if shares == current_shares:
             # Selling all shares - remove position completely
             self.portfolio_manager.portfolio = self.portfolio_manager.portfolio[~position_mask]
             logger.info(f"✅ Sold all {shares} shares of {ticker} - position closed")
         else:
             # Selling partial shares - update the position
-            remaining_shares = current_shares - shares
             # Update the specific row
             idx = self.portfolio_manager.portfolio[position_mask].index[0]
             self.portfolio_manager.portfolio.loc[idx, 'shares'] = remaining_shares
@@ -449,7 +452,16 @@ class KLSETradingEngine:
         
         logger.info(f"Sale details: {shares} shares at {current_price:.3f} MYR = {sale_value:.2f} MYR - {reason}")
         
-        return True
+        # Return sale details
+        return {
+            'success': True,
+            'ticker': ticker,
+            'shares_sold': shares,
+            'price_per_share': current_price,
+            'total_value': sale_value,
+            'remaining_shares': remaining_shares,
+            'reason': reason
+        }
 
     def _convert_to_yfinance_ticker(self, ticker: str) -> str:
         """
@@ -733,14 +745,23 @@ def sell_shares(
     """Sell a specific number of shares"""
     engine = KLSETradingEngine(alpha_vantage_key=alpha_vantage_key)
     
-    success = engine.sell_shares(
+    result = engine.sell_shares(
         ticker=ticker,
         shares=shares,
         reason=reason
     )
     
-    if success:
-        typer.echo(f"✅ Successfully sold {shares} shares of {ticker}")
+    if result and result['success']:
+        # Display detailed sale information
+        typer.echo(f"✅ Successfully sold {result['shares_sold']} shares of {result['ticker']}")
+        typer.echo(f"   💰 Price: {result['price_per_share']:.3f} MYR per share")
+        typer.echo(f"   💵 Total: {result['total_value']:.2f} MYR")
+        if result['remaining_shares'] > 0:
+            typer.echo(f"   📊 Remaining: {result['remaining_shares']} shares")
+        else:
+            typer.echo(f"   📊 Position: CLOSED")
+        if result['reason'] != "Manual sale":
+            typer.echo(f"   📝 Reason: {result['reason']}")
     else:
         typer.echo(f"❌ Failed to sell {shares} shares of {ticker}", err=True)
         raise typer.Exit(1)
