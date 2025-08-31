@@ -161,6 +161,9 @@ python KLSE_System/klse_microcap_database.py --action recommend --limit 5
 
 # Generate performance charts
 python KLSE_System/klse_visualization.py --action all
+
+# Generate Malaysian-focused AI prompts
+python KLSE_System/klse_prompt_manager.py
 ```
 
 ### System Management
@@ -188,6 +191,8 @@ KLSE_System/
 ├── klse_trading_engine.py         # Trading automation engine
 ├── klse_visualization.py          # Charts and visualization
 ├── klse_microcap_database.py      # Stock database and AI recommendations
+├── klse_prompt_manager.py         # Malaysian-focused AI prompts
+├── KLSE_Market_Prompts.md         # Malaysian market trading prompts
 ├── klse_portfolio.csv             # Current portfolio positions
 ├── klse_trades.csv                # Complete trade history
 ├── klse_daily_updates.csv         # Daily performance tracking
