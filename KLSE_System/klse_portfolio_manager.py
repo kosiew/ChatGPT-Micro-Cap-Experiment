@@ -422,7 +422,14 @@ class KLSEPortfolioManager:
                 current_price = stock_data['price']
                 position_value = current_price * position['shares']
                 position_pnl = (current_price - position['avg_cost_myr']) * position['shares']
-                position_return_pct = ((current_price - position['avg_cost_myr']) / position['avg_cost_myr']) * 100
+                
+                # Handle zero cost basis to avoid division by zero
+                if position['avg_cost_myr'] > 0:
+                    position_return_pct = ((current_price - position['avg_cost_myr']) / position['avg_cost_myr']) * 100
+                else:
+                    # If cost basis is 0, it means the position was received for free (e.g., bonus shares)
+                    # In this case, any positive price represents infinite return, so we'll use a special value
+                    position_return_pct = float('inf') if current_price > 0 else 0.0
                 
                 total_value += position_value
                 
