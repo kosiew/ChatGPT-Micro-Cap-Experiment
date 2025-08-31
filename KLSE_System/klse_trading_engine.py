@@ -183,7 +183,10 @@ class KLSETradingEngine:
                 df = pd.concat([existing, df], ignore_index=True)
             else:
                 # Update existing record
-                existing.loc[existing['date'] == record['date']] = record
+                mask = existing['date'] == record['date']
+                for key, value in record.items():
+                    if key in existing.columns:
+                        existing.loc[mask, key] = value
                 df = existing
         
         df.to_csv(self.daily_update_file, index=False)
@@ -205,12 +208,20 @@ class KLSETradingEngine:
         # Individual position records
         for position in positions:
             if position['action'] == 'HOLD':
+                # Calculate return percentage, handling zero cost basis
+                cost_basis = position['cost_basis']
+                if cost_basis > 0:
+                    return_pct = ((position['current_price'] - cost_basis) / cost_basis) * 100
+                else:
+                    # For zero cost basis (e.g., bonus shares), use special handling
+                    return_pct = float('inf') if position['current_price'] > 0 else 0.0
+                
                 performance_data.append({
                     'date': daily_record['date'],
                     'type': 'POSITION',
                     'ticker': position['ticker'],
                     'value_myr': position['position_value'],
-                    'return_pct': ((position['current_price'] - position['cost_basis']) / position['cost_basis']) * 100,
+                    'return_pct': return_pct,
                     'data_source': position.get('data_source', 'unknown')
                 })
         
@@ -276,54 +287,60 @@ class KLSETradingEngine:
         
         return success
     
-    def add_position_by_quantity(self, ticker: str, shares: int, 
+    def add_position_by_quantity(self, ticker: str, shares: int, price: float = None,
                                 stop_loss_pct: float = 15.0, company_name: str = "", 
-                                sector: str = "") -> bool:
+                                sector: str = "") -> dict:
         """
         Add new position to portfolio by exact number of shares
         
         Args:
             ticker: Malaysian stock code or name (e.g., "MBMR", "1155", "AXIATA")
             shares: Exact number of shares to buy
+            price: Price per share (if None, uses current market price)
             stop_loss_pct: Stop loss percentage below cost basis
             company_name: Company name for records
             sector: Business sector
+            
+        Returns:
+            Dictionary with purchase details or None if failed
         """
         if not ENHANCED_AVAILABLE:
             logger.error("Enhanced features not available")
-            return False
+            return None
         
         # Get ticker, company info, and sector from i3investor
         yf_ticker, auto_company_name, auto_sector = self._get_ticker_and_company_info(ticker)
         if not yf_ticker:
             logger.error(f"Could not convert ticker: {ticker}")
-            return False
+            return None
         
         # Use provided values or auto-detected ones
         final_company_name = company_name or auto_company_name
         final_sector = sector or auto_sector
         
-        # Check market eligibility
-        eligibility = self.check_market_eligibility()
-        if not eligibility['can_trade']:
-            logger.warning(f"Cannot trade: {eligibility['reason']}")
-            return False
+        # Check market eligibility (skip if using manual price)
+        if price is None:
+            eligibility = self.check_market_eligibility()
+            if not eligibility['can_trade']:
+                logger.warning(f"Cannot trade: {eligibility['reason']}")
+                return None
         
         # Add the position using the converted ticker
-        success = self.portfolio_manager.add_stock_by_quantity(
+        result = self.portfolio_manager.add_stock_by_quantity(
             ticker=yf_ticker,  # Use converted ticker
             shares=shares,
+            price=price,
             stop_loss_pct=stop_loss_pct,
             company_name=final_company_name,
             sector=final_sector
         )
         
-        if success:
+        if result and result['success']:
             logger.info(f"✅ Added {shares} shares of {ticker} -> {yf_ticker} ({final_company_name}) [{final_sector}]")
+            return result
         else:
             logger.error(f"❌ Failed to add {shares} shares of {ticker} -> {yf_ticker}")
-        
-        return success
+            return None
 
     def remove_position(self, ticker: str, reason: str = "Manual sale") -> bool:
         """
@@ -372,13 +389,15 @@ class KLSETradingEngine:
         
         return True
     
-    def sell_shares(self, ticker: str, shares: int, reason: str = "Manual sale") -> dict:
+    def sell_shares(self, ticker: str, shares: int, price: float, 
+                   reason: str = "Manual sale") -> dict:
         """
         Sell a specific number of shares from a position
         
         Args:
             ticker: Stock ticker to sell (can be name like "gamuda" or code like "5398.KL")
             shares: Number of shares to sell
+            price: Price per share
             reason: Reason for sale
             
         Returns:
@@ -397,71 +416,15 @@ class KLSETradingEngine:
             ticker = f"{ticker}.KL"
         # If it already ends with .KL, use as is
         
-        # Find position in portfolio
-        position_mask = self.portfolio_manager.portfolio['ticker'] == ticker
-        
-        if not position_mask.any():
-            logger.error(f"Position {ticker} not found in portfolio")
-            return None
-        
-        position = self.portfolio_manager.portfolio[position_mask].iloc[0]
-        current_shares = position['shares']
-        
-        if shares > current_shares:
-            logger.error(f"Cannot sell {shares} shares of {ticker} - only have {current_shares} shares")
-            return None
-        
-        if shares <= 0:
-            logger.error(f"Invalid number of shares to sell: {shares}")
-            return None
-        
-        # Get current price
-        stock_data = self.portfolio_manager._get_stock_data(ticker)
-        if not stock_data:
-            logger.error(f"Cannot get current price for {ticker}")
-            return None
-        
-        current_price = stock_data['price']
-        sale_value = current_price * shares
-        
-        # Add cash from sale
-        self.portfolio_manager.current_cash_myr += sale_value
-        
-        # Log the trade
-        self.portfolio_manager._log_trade(
-            "SELL_PARTIAL", ticker, shares, current_price, sale_value,
-            stock_data.get('source', 'unknown')
+        # Use the portfolio manager's sell method
+        result = self.portfolio_manager.sell_stock_by_quantity(
+            ticker=ticker,
+            shares=shares,
+            price=price,
+            reason=reason
         )
         
-        # Update the position (reduce shares or remove completely)
-        remaining_shares = current_shares - shares
-        if shares == current_shares:
-            # Selling all shares - remove position completely
-            self.portfolio_manager.portfolio = self.portfolio_manager.portfolio[~position_mask]
-            logger.info(f"✅ Sold all {shares} shares of {ticker} - position closed")
-        else:
-            # Selling partial shares - update the position
-            # Update the specific row
-            idx = self.portfolio_manager.portfolio[position_mask].index[0]
-            self.portfolio_manager.portfolio.loc[idx, 'shares'] = remaining_shares
-            self.portfolio_manager.portfolio.loc[idx, 'market_value_myr'] = remaining_shares * current_price
-            logger.info(f"✅ Sold {shares} shares of {ticker} - {remaining_shares} shares remaining")
-        
-        # Save portfolio
-        self.portfolio_manager._save_portfolio()
-        
-        logger.info(f"Sale details: {shares} shares at {current_price:.3f} MYR = {sale_value:.2f} MYR - {reason}")
-        
-        # Return sale details
-        return {
-            'success': True,
-            'ticker': ticker,
-            'shares_sold': shares,
-            'price_per_share': current_price,
-            'total_value': sale_value,
-            'remaining_shares': remaining_shares,
-            'reason': reason
-        }
+        return result
 
     def _convert_to_yfinance_ticker(self, ticker: str) -> str:
         """
@@ -707,6 +670,7 @@ def add_position(
 def buy_shares(
     ticker: Annotated[str, typer.Argument(help="Stock ticker (e.g., 1155 for Maybank)")],
     shares: Annotated[int, typer.Argument(help="Number of shares to buy")],
+    price: Annotated[float, typer.Argument(help="Price per share in MYR")],
     stop_loss: Annotated[float, typer.Option("--stop-loss", "-s", help="Stop loss percentage")] = 15.0,
     company_name: Annotated[str, typer.Option("--name", "-n", help="Company name")] = "",
     sector: Annotated[str, typer.Option("--sector", help="Business sector")] = "",
@@ -715,19 +679,26 @@ def buy_shares(
         typer.Option("--alpha-vantage-key", "-k", help="Alpha Vantage API key")
     ] = None
 ):
-    """Buy a specific number of shares"""
+    """Buy a specific number of shares at a specific price"""
     engine = KLSETradingEngine(alpha_vantage_key=alpha_vantage_key)
     
-    success = engine.add_position_by_quantity(
+    result = engine.add_position_by_quantity(
         ticker=ticker,
         shares=shares,
+        price=price,
         stop_loss_pct=stop_loss,
         company_name=company_name,
         sector=sector
     )
     
-    if success:
-        typer.echo(f"✅ Successfully bought {shares} shares of {ticker}")
+    if result and result['success']:
+        # Display detailed purchase information
+        typer.echo(f"✅ Successfully bought {result['shares_bought']} shares of {result['ticker']}")
+        typer.echo(f"   🏢 Company: {result['company_name']}")
+        typer.echo(f"   💰 Price: {result['price_per_share']:.3f} MYR per share")
+        typer.echo(f"   💵 Total: {result['total_cost']:.2f} MYR")
+        typer.echo(f"   🛡️ Stop Loss: {result['stop_loss_price']:.3f} MYR")
+        typer.echo(f"   🏭 Sector: {result['sector']}")
     else:
         typer.echo(f"❌ Failed to buy {shares} shares of {ticker}", err=True)
         raise typer.Exit(1)
@@ -736,18 +707,20 @@ def buy_shares(
 def sell_shares(
     ticker: Annotated[str, typer.Argument(help="Stock ticker to sell")],
     shares: Annotated[int, typer.Argument(help="Number of shares to sell")],
+    price: Annotated[float, typer.Argument(help="Price per share in MYR")],
     reason: Annotated[str, typer.Option("--reason", "-r", help="Reason for sale")] = "Manual sale",
     alpha_vantage_key: Annotated[
         Optional[str], 
         typer.Option("--alpha-vantage-key", "-k", help="Alpha Vantage API key")
     ] = None
 ):
-    """Sell a specific number of shares"""
+    """Sell a specific number of shares at a specific price"""
     engine = KLSETradingEngine(alpha_vantage_key=alpha_vantage_key)
     
     result = engine.sell_shares(
         ticker=ticker,
         shares=shares,
+        price=price,
         reason=reason
     )
     

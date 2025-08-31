@@ -311,14 +311,16 @@ class KLSEPortfolioManager:
         logger.info(f"Added {shares} shares of {full_ticker} at {current_price:.3f} MYR (Total: {cost:.2f} MYR)")
         return True
     
-    def add_stock_by_quantity(self, ticker: str, shares: int, stop_loss_pct: float = 15.0, 
-                             company_name: str = "", sector: str = "") -> bool:
+    def add_stock_by_quantity(self, ticker: str, shares: int, price: float = None, 
+                             stop_loss_pct: float = 15.0, company_name: str = "", 
+                             sector: str = "") -> dict:
         """
         Add a new stock to portfolio by specifying exact number of shares
         
         Args:
             ticker: Malaysian stock code (e.g., "1155" for Maybank)
             shares: Exact number of shares to add
+            price: Price per share (if None, uses current market price)
             stop_loss_pct: Stop loss percentage below cost basis
             company_name: Company name for records
             sector: Business sector
@@ -326,13 +328,17 @@ class KLSEPortfolioManager:
         # Ensure .KL suffix for data fetching
         full_ticker = f"{ticker}.KL" if not ticker.endswith('.KL') else ticker
         
-        # Get current stock data
-        stock_data = self._get_stock_data(full_ticker)
-        if not stock_data:
-            logger.error(f"Could not fetch data for {full_ticker}")
-            return False
-        
-        current_price = stock_data['price']
+        # If price is provided, use it; otherwise get current market price
+        if price is not None:
+            current_price = price
+            stock_data = {'price': price, 'source': 'manual'}  # Create dummy stock_data for logging
+        else:
+            # Get current stock data
+            stock_data = self._get_stock_data(full_ticker)
+            if not stock_data:
+                logger.error(f"Could not fetch data for {full_ticker}")
+                return {'success': False, 'error': 'Could not fetch market data'}
+            current_price = stock_data['price']
         cost = current_price * shares
         
         # Auto-inject cash if needed (simulates adding money to account)
@@ -379,8 +385,103 @@ class KLSEPortfolioManager:
         )
         
         logger.info(f"Added {shares} shares of {full_ticker} at {current_price:.3f} MYR (Total: {cost:.2f} MYR)")
-        return True
+        
+        # Return detailed purchase information
+        return {
+            'success': True,
+            'ticker': full_ticker,
+            'company_name': company_name or ticker,
+            'shares_bought': shares,
+            'price_per_share': current_price,
+            'total_cost': cost,
+            'stop_loss_price': stop_loss_price,
+            'sector': sector or 'Unknown'
+        }
     
+    def sell_stock_by_quantity(self, ticker: str, shares: int, price: float = None, 
+                              reason: str = "Manual sale") -> dict:
+        """
+        Sell a specific number of shares at a specific price
+        
+        Args:
+            ticker: Stock ticker to sell
+            shares: Number of shares to sell
+            price: Price per share (if None, uses current market price)
+            reason: Reason for sale
+            
+        Returns:
+            Dictionary with sale details or error info
+        """
+        # Find position in portfolio
+        position_mask = self.portfolio['ticker'] == ticker
+        
+        if not position_mask.any():
+            logger.error(f"Position {ticker} not found in portfolio")
+            return {'success': False, 'error': f'Position {ticker} not found'}
+        
+        position = self.portfolio[position_mask].iloc[0]
+        current_shares = position['shares']
+        
+        if shares > current_shares:
+            logger.error(f"Cannot sell {shares} shares of {ticker} - only have {current_shares} shares")
+            return {'success': False, 'error': f'Insufficient shares: have {current_shares}, trying to sell {shares}'}
+        
+        if shares <= 0:
+            logger.error(f"Invalid number of shares to sell: {shares}")
+            return {'success': False, 'error': f'Invalid share quantity: {shares}'}
+        
+        # If price is provided, use it; otherwise get current market price
+        if price is not None:
+            current_price = price
+            stock_data = {'price': price, 'source': 'manual'}
+        else:
+            # Get current market price
+            stock_data = self._get_stock_data(ticker)
+            if not stock_data:
+                logger.error(f"Cannot get current price for {ticker}")
+                return {'success': False, 'error': f'Could not fetch market data for {ticker}'}
+            current_price = stock_data['price']
+        
+        sale_value = current_price * shares
+        
+        # Add cash from sale
+        self.current_cash_myr += sale_value
+        
+        # Log the trade
+        self._log_trade(
+            "SELL_PARTIAL", ticker, shares, current_price, sale_value,
+            stock_data.get('source', 'unknown')
+        )
+        
+        # Update the position (reduce shares or remove completely)
+        remaining_shares = current_shares - shares
+        if shares == current_shares:
+            # Selling all shares - remove position completely
+            self.portfolio = self.portfolio[~position_mask]
+            logger.info(f"✅ Sold all {shares} shares of {ticker} - position closed")
+        else:
+            # Selling partial shares - update the position
+            idx = self.portfolio[position_mask].index[0]
+            self.portfolio.loc[idx, 'shares'] = remaining_shares
+            self.portfolio.loc[idx, 'market_value_myr'] = remaining_shares * current_price
+            logger.info(f"✅ Sold {shares} shares of {ticker} - {remaining_shares} shares remaining")
+        
+        # Save portfolio
+        self._save_portfolio()
+        
+        logger.info(f"Sale details: {shares} shares at {current_price:.3f} MYR = {sale_value:.2f} MYR - {reason}")
+        
+        # Return sale details
+        return {
+            'success': True,
+            'ticker': ticker,
+            'shares_sold': shares,
+            'price_per_share': current_price,
+            'total_value': sale_value,
+            'remaining_shares': remaining_shares,
+            'reason': reason
+        }
+
     def _calculate_portfolio_value(self) -> float:
         """Calculate total portfolio value including cash"""
         if self.portfolio.empty:
