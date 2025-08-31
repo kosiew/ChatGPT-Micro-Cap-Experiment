@@ -62,10 +62,13 @@ class KLSEPortfolioManager:
         # Load or create configuration
         self._load_config()
         
+        # Load saved cash balance (overrides starting_cash_myr if exists)
+        self._load_cash_balance()
+        
         # Initialize portfolio
         self.portfolio = self._load_portfolio()
         
-        logger.info(f"KLSE Portfolio Manager initialized with {starting_cash_myr:.2f} MYR")
+        logger.info(f"KLSE Portfolio Manager initialized with {self.current_cash_myr:.2f} MYR")
     
     def _load_config(self):
         """Load or create system configuration"""
@@ -110,9 +113,50 @@ class KLSEPortfolioManager:
         return portfolio
     
     def _save_portfolio(self):
-        """Save portfolio to CSV"""
+        """Save portfolio to CSV and update cash balance in config"""
         self.portfolio.to_csv(self.portfolio_file, index=False)
         logger.info(f"Portfolio saved to {self.portfolio_file}")
+        
+        # Also save current cash balance to config file
+        self._save_cash_balance()
+    
+    def _save_cash_balance(self):
+        """Save current cash balance to config file"""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+            else:
+                config = {}
+            
+            config['current_cash_myr'] = self.current_cash_myr
+            
+            with open(self.config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+                
+            logger.info(f"Cash balance {self.current_cash_myr:.2f} MYR saved to {self.config_file}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save cash balance: {e}")
+    
+    def _load_cash_balance(self):
+        """Load current cash balance from config file"""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+                
+                if 'current_cash_myr' in config:
+                    self.current_cash_myr = config['current_cash_myr']
+                    logger.info(f"Loaded cash balance: {self.current_cash_myr:.2f} MYR from config")
+                else:
+                    logger.info("No saved cash balance found, using starting cash")
+            else:
+                logger.info("No config file found, using starting cash")
+                
+        except Exception as e:
+            logger.error(f"Failed to load cash balance: {e}")
+            logger.info("Using starting cash balance")
     
     def _validate_board_lot(self, shares: int) -> bool:
         """Validate that shares are in proper board lots"""
