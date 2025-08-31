@@ -12,6 +12,7 @@ python run_klse_system.py --action analysis
 
 # AI prompts for strategy review
 python KLSE_System/klse_prompt_manager.py
+# → Copy output → Paste into ChatGPT → Get trading decisions
 ```
 
 ## Quick Status Check (anytime)
@@ -32,11 +33,12 @@ python run_klse_system.py --action demo
 
 ## Key Features
 - ✅ 100% Malaysian stock data coverage
-- ✅ Automated stop-loss execution
+- ✅ Automated stop-loss execution (5% below market price)
 - ✅ Board lot compliance (100 shares minimum)
 - ✅ MYR currency handling
 - ✅ Malaysian market hours (9AM-5PM GMT+8)
-- ✅ AI prompts with local market context
+- ✅ AI prompts with local market context (ready for ChatGPT)
+- ✅ Portfolio value: MYR 203,889 (13 positions)
 
 ---
 *For full details see: KLSE_WORKFLOWS.md*

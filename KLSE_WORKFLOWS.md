@@ -83,18 +83,26 @@ python run_klse_system.py --action analysis
 python KLSE_System/klse_prompt_manager.py
 ```
 
-**Workflow:**
-1. Run prompt generator to get current portfolio context
-2. Use generated Malaysian market prompts with AI (ChatGPT/Claude)
-3. AI reviews Malaysian economic conditions, sector trends
-4. AI makes buy/sell/hold decisions based on local market dynamics
-5. Execute AI decisions manually through trading engine
+**Complete AI Workflow:**
+1. **Generate Prompts:** Run the command above to get ready-to-use prompts
+2. **Copy Generated Prompts:** The script outputs prompts ready for ChatGPT
+3. **Paste into ChatGPT:** Use the generated prompts directly 
+4. **Get AI Decisions:** ChatGPT analyzes with Malaysian market context
+5. **Execute Trades:** Implement AI recommendations through trading engine
 
-**AI Prompt Types:**
-- Weekly portfolio review with Malaysian market context
-- Deep research on Malaysian micro-caps
-- Economic policy impact analysis
-- Sector rotation opportunities
+**Sample Generated Prompts Include:**
+- Current portfolio status (your 13 positions, MYR 203,889 value)
+- Malaysian market conditions and BNM policy updates
+- Sector analysis (telecommunications, banking, real estate, etc.)
+- Risk management with 5% stop-loss strategy
+- Board lot compliance for KLSE trading
+- Economic indicators and currency considerations
+
+**AI Decision Types:**
+- BUY: New micro-cap positions under MYR 300M market cap
+- SELL: Exit underperforming positions
+- HOLD: Maintain current positions with stop-loss adjustments
+- REBALANCE: Sector allocation optimization
 
 ---
 
@@ -238,15 +246,47 @@ python trading_system_manager.py --action dual-update
 # Today's essential: Daily update after market close
 python KLSE_System/klse_trading_engine.py --action daily
 
-# This weekend: Weekly analysis
+# This weekend: Weekly analysis + AI prompts
 python run_klse_system.py --action analysis
+python KLSE_System/klse_prompt_manager.py
 
 # Right now: Check current status
 python KLSE_System/klse_trading_engine.py --action report
 
-# For AI decision: Get Malaysian market prompts
+# Initial setup: Run baseline analysis (first time only)
+python run_klse_system.py --action demo
+```
+
+## 📋 **AI PROMPT WORKFLOW**
+
+### Step 1: Generate Current Context
+```bash
 python KLSE_System/klse_prompt_manager.py
 ```
+
+### Step 2: Copy Output to ChatGPT
+The script generates ready-to-use prompts like:
+
+**Portfolio Review Prompt:**
+```
+You are managing a Malaysian equity portfolio worth MYR 203,889 with 13 positions...
+[Current holdings with stop-losses, market context, sector analysis]
+Based on Malaysian market conditions, recommend BUY/SELL/HOLD decisions...
+```
+
+**Deep Research Prompt:**
+```
+Research Malaysian micro-cap stocks (market cap < MYR 300M) considering:
+- Bursa Malaysia regulations and board lot requirements
+- Bank Negara Malaysia monetary policy
+- Sector trends in telecommunications, banking, real estate...
+```
+
+### Step 3: Get AI Recommendations
+Paste prompts into ChatGPT and get specific trading decisions
+
+### Step 4: Execute Decisions
+Use trading engine to implement AI recommendations
 
 ---
 
@@ -268,10 +308,17 @@ If you only want to do the absolute minimum:
 # Once per day (after market close)
 python KLSE_System/klse_trading_engine.py --action daily
 
-# Once per week (Sunday)
+# Once per week (Sunday) - Analysis + AI Session
 python run_klse_system.py --action analysis
-python KLSE_System/klse_prompt_manager.py  # Use output for AI decisions
+python KLSE_System/klse_prompt_manager.py
+# Copy generated prompts → Paste into ChatGPT → Get trading decisions
 ```
+
+**Complete Weekly AI Session (15 minutes):**
+1. **Generate prompts** (30 seconds)
+2. **Copy to ChatGPT** (30 seconds) 
+3. **AI analysis** (10 minutes)
+4. **Execute decisions** (4 minutes)
 
 This covers 80% of the system's value with minimal time investment!
 
