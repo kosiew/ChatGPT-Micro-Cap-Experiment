@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 """
-KLSE Prompt Manager - Enhanced
-Generates trading prompts for KLSE micro-cap trading system
+KLSE Prompt Manager - Typer CLI for generating trading prompts
+Provides three types of prompts: weekly evaluation, deep research, and starting prompt
 """
 
+import typer
 import os
 import json
-import typer
-from rich.console import Console
-from rich.panel import Panel
-from typing import Optional
-from datetime import datetime
 import pandas as pd
+from datetime import datetime
+from typing import Optional
 
-app = typer.Typer()
-console = Console()
+app = typer.Typer(help="KLSE Micro-Cap Trading Prompt Generator")
 
 class KLSEPromptManager:
     def __init__(self, config_path: str = "klse_config.json"):
@@ -46,7 +43,7 @@ class KLSEPromptManager:
             "trading_rules": {
                 "market_cap_limit": 500000000,
                 "minimum_volume": 50000,
-                "sectors_excluded": ["REIT"]
+                "sectors_excluded": []
             }
         }
     
@@ -75,7 +72,7 @@ class KLSEPromptManager:
                 portfolio_data["current_positions"] = len(current_positions)
                 
         except Exception as e:
-            console.print(f"[yellow]Warning: Could not read portfolio data: {e}[/yellow]")
+            print(f"Warning: Could not read portfolio data: {e}")
             
         return portfolio_data
     
@@ -367,50 +364,55 @@ def weekly():
     """Generate weekly portfolio evaluation prompt"""
     manager = KLSEPromptManager()
     prompt = manager.generate_weekly_evaluation_prompt()
-    
-    console.print(Panel(
-        prompt,
-        title="📊 KLSE Weekly Evaluation Prompt",
-        border_style="green"
-    ))
+    print(prompt)
 
 @app.command()
 def research():
     """Generate deep research prompt for new opportunities"""
     manager = KLSEPromptManager()
     prompt = manager.generate_deep_research_prompt()
-    
-    console.print(Panel(
-        prompt,
-        title="🔬 KLSE Deep Research Prompt",
-        border_style="blue"
-    ))
+    print(prompt)
 
 @app.command()
-def start():
+def starting():
     """Generate starting/initialization prompt"""
     manager = KLSEPromptManager()
     prompt = manager.generate_starting_prompt()
-    
-    console.print(Panel(
-        prompt,
-        title="🚀 KLSE Starting Prompt",
-        border_style="magenta"
-    ))
+    print(prompt)
 
 @app.command()
 def demo():
-    """Generate a demo trading prompt (legacy)"""
-    manager = KLSEPromptManager()
-    
-    # Use the weekly evaluation as demo for now
-    prompt = manager.generate_weekly_evaluation_prompt()
-    
-    console.print(Panel(
-        prompt,
-        title="🇲🇾 KLSE Demo Trading Prompt",
-        border_style="yellow"
-    ))
+    """Show all available prompt types with brief descriptions"""
+    print("""# KLSE Prompt Manager - Available Commands
+
+## Command Options:
+
+### `weekly`
+Generate a comprehensive weekly portfolio evaluation prompt.
+- Reviews current positions and performance
+- Analyzes market conditions
+- Provides decision framework for the upcoming week
+
+### `research` 
+Generate a deep research prompt for identifying new opportunities.
+- Systematic screening methodology
+- Fundamental and technical analysis framework
+- Catalyst identification and timing
+
+### `starting`
+Generate the initial setup prompt for beginning the trading system.
+- Portfolio configuration and rules
+- Investment framework and criteria
+- Risk management protocols
+
+## Usage Examples:
+```bash
+python klse_prompt_manager.py weekly
+python klse_prompt_manager.py research  
+python klse_prompt_manager.py starting
+```
+
+Choose the appropriate prompt type for your current trading session needs.""")
 
 if __name__ == "__main__":
     app()
