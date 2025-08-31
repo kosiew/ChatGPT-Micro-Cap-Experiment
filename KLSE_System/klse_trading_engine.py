@@ -51,7 +51,7 @@ class KLSETradingEngine:
         # Initialize portfolio manager
         if ENHANCED_AVAILABLE:
             self.portfolio_manager = KLSEPortfolioManager(
-                starting_cash_myr=10000.0,  # 10K MYR starting capital
+                starting_cash_myr=0.0,  # Started with existing holdings, no cash
                 alpha_vantage_key=alpha_vantage_key
             )
             self.data_fetcher = KLSEDataFetcher(alpha_vantage_key)
