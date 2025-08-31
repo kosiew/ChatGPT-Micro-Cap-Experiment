@@ -1,0 +1,6 @@
+Date,Ticker,Shares,Cost Basis,Stop Loss,Current Price,Total Value,PnL,Action,Data Source,Cash Balance,Total Equity
+2025-08-31,1155.KL,100,9.95,8.5,9.9,990.0,-5.0,HOLD,yfinance,,
+2025-08-31,4723.KL,1000,0.095,0.08,0.09,90.0,-5.0,HOLD,yfinance,,
+2025-08-31,0090.KL,500,0.29,0.25,0.285,142.5,-2.5,HOLD,yfinance,,
+2025-08-31,0176.KL,800,0.215,0.18,0.21,168.0,-4.0,HOLD,yfinance,,
+2025-08-31,TOTAL,,,,,1390.5,-16.5,,yfinance: 100.0%,1000.0,2390.5

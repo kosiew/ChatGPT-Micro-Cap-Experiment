@@ -1,0 +1,56 @@
+{
+  "Technology": [
+    "Software",
+    "Hardware",
+    "Telecommunications",
+    "E-commerce"
+  ],
+  "Industrial": [
+    "Manufacturing",
+    "Construction",
+    "Engineering",
+    "Transportation"
+  ],
+  "Consumer": [
+    "Retail",
+    "Food & Beverage",
+    "Consumer Goods",
+    "Automotive"
+  ],
+  "Healthcare": [
+    "Pharmaceuticals",
+    "Medical Equipment",
+    "Healthcare Services"
+  ],
+  "Financial": [
+    "Banks",
+    "Insurance",
+    "Investment",
+    "REIT"
+  ],
+  "Energy": [
+    "Oil & Gas",
+    "Renewable Energy",
+    "Utilities"
+  ],
+  "Materials": [
+    "Chemicals",
+    "Mining",
+    "Steel",
+    "Paper"
+  ],
+  "Real Estate": [
+    "Property Development",
+    "Property Investment"
+  ],
+  "Agriculture": [
+    "Palm Oil",
+    "Rubber",
+    "Food Production"
+  ],
+  "Tourism": [
+    "Hotels",
+    "Entertainment",
+    "Travel"
+  ]
+}

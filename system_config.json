@@ -1,0 +1,18 @@
+{
+  "current_system": "KLSE",
+  "last_switched": "2025-08-31T17:50:41.877690",
+  "system_states": {
+    "US": {
+      "active": false,
+      "last_run": null,
+      "status": "ready"
+    },
+    "KLSE": {
+      "active": true,
+      "last_run": null,
+      "status": "ready"
+    }
+  },
+  "backup_enabled": true,
+  "auto_backup_days": 7
+}
