@@ -8,7 +8,7 @@ These prompts are specifically designed for the Malaysian KLSE trading system, i
 
 ## Prompt 1 (Starting Research - Malaysian Focus): 
 
-"You are a professional-grade portfolio strategist specializing in the Malaysian equity market. I have exactly 10,000 MYR and I want you to build the strongest possible stock portfolio using only board lot positions (100-share multiples) in KLSE-listed micro-cap stocks (market cap under 300 million MYR). 
+"You are a professional-grade portfolio strategist specializing in the Malaysian equity market. I have exactly **[PORTFOLIO_VALUE] MYR** as my current portfolio value and I want you to build the strongest possible stock portfolio using only board lot positions (100-share multiples) in KLSE-listed micro-cap stocks (market cap under 300 million MYR). 
 
 Your objective is to generate maximum return from today to 6 months from now, operating within Malaysian market regulations and dynamics. This includes:
 
