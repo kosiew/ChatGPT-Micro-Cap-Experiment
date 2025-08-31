@@ -13,6 +13,7 @@ import logging
 from typing import Dict, List, Optional
 import typer
 from typing_extensions import Annotated
+import yfinance as yf
 
 # Add parent directory for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,6 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Import our portfolio manager and data fetcher
 try:
     from KLSE_System.klse_portfolio_manager import KLSEPortfolioManager
+    from KLSE_System.i3investor_scraper import I3InvestorScraper
     from redundant_data_fetcher import KLSEDataFetcher
     ENHANCED_AVAILABLE = True
 except ImportError as e:
@@ -53,6 +55,7 @@ class KLSETradingEngine:
                 alpha_vantage_key=alpha_vantage_key
             )
             self.data_fetcher = KLSEDataFetcher(alpha_vantage_key)
+            self.i3_scraper = I3InvestorScraper()
         else:
             logger.error("Portfolio manager not available - please check imports")
             sys.exit(1)
@@ -139,6 +142,36 @@ class KLSETradingEngine:
             'market_info': eligibility['market_info']
         }
     
+    def get_yfinance_ticker(self, ticker: str) -> str:
+        """
+        Convert Malaysian stock ticker to yfinance format
+        
+        Args:
+            ticker: Stock name or ticker (e.g., 'MBMR', 'AXIATA')
+            
+        Returns:
+            Formatted ticker for yfinance (e.g., '5983.KL', '6888.KL')
+        """
+        # If already in .KL format, return as is
+        if ticker.endswith('.KL'):
+            return ticker
+            
+        # If it's already a numeric code, add .KL
+        if ticker.isdigit():
+            return f"{ticker}.KL"
+            
+        # Try to get the ticker code from i3investor
+        logger.info(f"🔍 Looking up ticker code for {ticker}")
+        ticker_code = self.i3_scraper.get_ticker_code(ticker)
+        
+        if ticker_code:
+            logger.info(f"✅ Found ticker: {ticker} -> {ticker_code}")
+            return ticker_code
+        else:
+            # Fallback: assume it's already correct and add .KL
+            logger.warning(f"⚠️  Could not find ticker code for {ticker}, using {ticker}.KL")
+            return f"{ticker}.KL"
+    
     def _save_daily_record(self, record: Dict):
         """Save daily record to CSV"""
         df = pd.DataFrame([record])
@@ -199,12 +232,16 @@ class KLSETradingEngine:
         Add new position to portfolio
         
         Args:
-            ticker: Malaysian stock code (e.g., "1155" for Maybank)
+            ticker: Malaysian stock code or name (e.g., "MBMR", "1155", "AXIATA")
             target_weight_pct: Target weight as percentage of portfolio
             stop_loss_pct: Stop loss percentage below cost basis
             company_name: Company name for records
             sector: Business sector
         """
+        # Convert ticker to yfinance format
+        yf_ticker = self.get_yfinance_ticker(ticker)
+        logger.info(f"🔄 Converting ticker: {ticker} -> {yf_ticker}")
+        
         # Check if we can add more positions
         current_positions = len(self.portfolio_manager.portfolio)
         
@@ -223,9 +260,9 @@ class KLSETradingEngine:
             logger.warning(f"Insufficient cash (reserve: {self.MIN_CASH_RESERVE_MYR} MYR)")
             return False
         
-        # Add the position
+        # Add the position using the converted ticker
         success = self.portfolio_manager.add_stock(
-            ticker=ticker,
+            ticker=yf_ticker,  # Use converted ticker
             target_weight_pct=target_weight_pct,
             stop_loss_pct=stop_loss_pct,
             company_name=company_name,
@@ -233,9 +270,9 @@ class KLSETradingEngine:
         )
         
         if success:
-            logger.info(f"✅ Added new position: {ticker} ({target_weight_pct}% target weight)")
+            logger.info(f"✅ Added new position: {ticker} -> {yf_ticker} ({target_weight_pct}% target weight)")
         else:
-            logger.error(f"❌ Failed to add position: {ticker}")
+            logger.error(f"❌ Failed to add position: {ticker} -> {yf_ticker}")
         
         return success
     
@@ -498,6 +535,44 @@ def trading_summary(
     typer.echo(f"Positions: {summary['total_positions']}/{summary['max_positions']}")
     typer.echo(f"Available Slots: {summary['available_position_slots']}")
     typer.echo(f"Can Add Positions: {'✅ Yes' if summary['can_add_positions'] else '❌ No'}")
+
+@app.command("ticker")
+def test_ticker_conversion(
+    tickers: str = typer.Argument(..., help="Comma-separated list of tickers to test (e.g., 'MBMR,AXIATA,1155')"),
+    alpha_vantage_key: Annotated[
+        Optional[str], 
+        typer.Option("--alpha-vantage-key", "-k", help="Alpha Vantage API key")
+    ] = None
+):
+    """Test ticker conversion from Malaysian names to yfinance format"""
+    engine = KLSETradingEngine(alpha_vantage_key=alpha_vantage_key)
+    
+    ticker_list = [t.strip() for t in tickers.split(',')]
+    
+    typer.echo("🔍 TICKER CONVERSION TEST")
+    typer.echo("=" * 40)
+    
+    for ticker in ticker_list:
+        typer.echo(f"\nTesting: {ticker}")
+        try:
+            yf_ticker = engine.get_yfinance_ticker(ticker)
+            typer.echo(f"  Result: {ticker} -> {yf_ticker}")
+            
+            # Test if we can get price data
+            typer.echo(f"  Testing price fetch...")
+            try:
+                stock = yf.Ticker(yf_ticker)
+                info = stock.history(period="1d")
+                if not info.empty:
+                    latest_price = info['Close'].iloc[-1]
+                    typer.echo(f"  ✅ Price: {latest_price:.3f} MYR")
+                else:
+                    typer.echo(f"  ❌ No price data available")
+            except Exception as e:
+                typer.echo(f"  ❌ Price fetch failed: {str(e)}")
+                
+        except Exception as e:
+            typer.echo(f"  ❌ Conversion failed: {str(e)}")
 
 def main():
     """Main entry point"""

@@ -105,18 +105,103 @@ class I3InvestorScraper:
         self.logger.error(f"❌ i3investor: All {max_retries} attempts failed for {clean_ticker}")
         return None
 
+    def get_ticker_code(self, ticker: str, max_retries: int = 3) -> Optional[str]:
+        """
+        Get the numeric ticker code from i3investor website
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., 'MBMR', 'AXIATA')
+            max_retries: Maximum number of retry attempts
+            
+        Returns:
+            Formatted ticker for yfinance (e.g., '5983.KL'), or None if failed
+        """
+        # Clean ticker - remove .KL suffix if present
+        clean_ticker = ticker.replace('.KL', '').upper()
+        
+        url = f"{self.base_url}{clean_ticker}"
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                self.logger.info(f"Attempting to get ticker code for {clean_ticker} (attempt {attempt})")
+                
+                response = self.session.get(url, timeout=10)
+                response.raise_for_status()
+                
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # Look for the subtitle element with ticker information
+                # <p class="m-0 subtitle" style="font-size: 18px; ">
+                #     <strong style="">KLSE (MYR): MBMR (5983)</strong>
+                # </p>
+                subtitle_p = soup.find('p', class_='subtitle')
+                
+                if subtitle_p:
+                    strong_tag = subtitle_p.find('strong')
+                    if strong_tag:
+                        text = strong_tag.get_text(strip=True)
+                        
+                        # Extract ticker code from text like "KLSE (MYR): MBMR (5983)"
+                        # Look for pattern: SYMBOL (NNNN)
+                        match = re.search(fr'{clean_ticker}\s*\((\d+)\)', text)
+                        if match:
+                            ticker_code = match.group(1)
+                            formatted_ticker = f"{ticker_code}.KL"
+                            self.logger.info(f"✅ Found ticker code: {clean_ticker} -> {formatted_ticker}")
+                            return formatted_ticker
+                
+                # Fallback: look for any pattern with the ticker name and numbers in parentheses
+                all_text = soup.get_text()
+                match = re.search(fr'{clean_ticker}\s*\((\d+)\)', all_text)
+                if match:
+                    ticker_code = match.group(1)
+                    formatted_ticker = f"{ticker_code}.KL"
+                    self.logger.info(f"✅ Found ticker code (fallback): {clean_ticker} -> {formatted_ticker}")
+                    return formatted_ticker
+                
+                self.logger.warning(f"❌ Could not find ticker code for {clean_ticker}")
+                if attempt < max_retries:
+                    time.sleep(1)
+                    continue
+                return None
+                    
+            except requests.RequestException as e:
+                self.logger.warning(f"❌ i3investor ticker attempt {attempt} failed for {clean_ticker}: {str(e)}")
+                if attempt < max_retries:
+                    time.sleep(2)
+                    continue
+                return None
+                
+            except Exception as e:
+                self.logger.error(f"❌ i3investor ticker unexpected error for {clean_ticker}: {str(e)}")
+                if attempt < max_retries:
+                    time.sleep(1)
+                    continue
+                return None
+        
+        self.logger.error(f"❌ i3investor: All {max_retries} attempts failed for ticker {clean_ticker}")
+        return None
+
     def test_scraper(self, test_tickers: list = None):
         """Test the scraper with a few known tickers"""
         if test_tickers is None:
-            test_tickers = ['AXIATA', 'MAYBANK', 'TENAGA']
+            test_tickers = ['AXIATA', 'MAYBANK', 'TENAGA', 'MBMR']
         
         print("Testing I3Investor Scraper:")
-        print("=" * 40)
+        print("=" * 50)
         
         for ticker in test_tickers:
+            print(f"\nTesting {ticker}:")
+            
+            # Test ticker code extraction
+            ticker_code = self.get_ticker_code(ticker)
+            ticker_status = ticker_code if ticker_code else "FAILED"
+            print(f"  Ticker Code: {ticker_status}")
+            
+            # Test price fetching
             price = self.get_stock_price(ticker)
-            status = f"{price} MYR" if price else "FAILED"
-            print(f"{ticker:10}: {status}")
+            price_status = f"{price} MYR" if price else "FAILED"
+            print(f"  Price:       {price_status}")
 
 if __name__ == "__main__":
     # Test the scraper
