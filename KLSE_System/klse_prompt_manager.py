@@ -58,10 +58,22 @@ class KLSEPromptManager:
             "recent_trades": []
         }
         
-        # Try to read current portfolio
+        # Try to read current portfolio - check multiple possible locations
+        portfolio_file = None
+        possible_locations = [
+            "klse_portfolio.csv",  # Current directory
+            "KLSE_System/klse_portfolio.csv",  # From project root
+            os.path.join(os.path.dirname(__file__), "klse_portfolio.csv")  # Same directory as script
+        ]
+        
+        for location in possible_locations:
+            if os.path.exists(location):
+                portfolio_file = location
+                break
+        
         try:
-            if os.path.exists("klse_portfolio.csv"):
-                df = pd.read_csv("klse_portfolio.csv")
+            if portfolio_file:
+                df = pd.read_csv(portfolio_file)
                 if not df.empty:
                     # Calculate portfolio metrics
                     portfolio_data["current_positions"] = len(df)
@@ -104,6 +116,26 @@ class KLSEPromptManager:
                     # Calculate approximate cash (assuming starting capital)
                     total_invested = sum(h["shares"] * h["avg_cost"] for h in holdings if h["avg_cost"] > 0)
                     portfolio_data["cash_balance"] = max(0, self.config["portfolio"]["starting_capital"] - total_invested)
+                    
+            # Try to read recent trades
+            trades_file = None
+            possible_trade_locations = [
+                "klse_trades.csv",  # Current directory
+                "KLSE_System/klse_trades.csv",  # From project root
+                os.path.join(os.path.dirname(__file__), "klse_trades.csv")  # Same directory as script
+            ]
+            
+            for location in possible_trade_locations:
+                if os.path.exists(location):
+                    trades_file = location
+                    break
+                    
+            if trades_file:
+                trades_df = pd.read_csv(trades_file)
+                if not trades_df.empty:
+                    # Get last 5 trades
+                    recent_trades = trades_df.tail(5).to_dict('records')
+                    portfolio_data["recent_trades"] = recent_trades
                 
         except Exception as e:
             print(f"Warning: Could not read portfolio data: {e}")
