@@ -293,11 +293,15 @@ class KLSETradingEngine:
             logger.error("Enhanced features not available")
             return False
         
-        # Convert ticker to yfinance format
-        yf_ticker = self._convert_to_yfinance_ticker(ticker)
+        # Get ticker, company info, and sector from i3investor
+        yf_ticker, auto_company_name, auto_sector = self._get_ticker_and_company_info(ticker)
         if not yf_ticker:
             logger.error(f"Could not convert ticker: {ticker}")
             return False
+        
+        # Use provided values or auto-detected ones
+        final_company_name = company_name or auto_company_name
+        final_sector = sector or auto_sector
         
         # Check market eligibility
         eligibility = self.check_market_eligibility()
@@ -310,12 +314,12 @@ class KLSETradingEngine:
             ticker=yf_ticker,  # Use converted ticker
             shares=shares,
             stop_loss_pct=stop_loss_pct,
-            company_name=company_name,
-            sector=sector
+            company_name=final_company_name,
+            sector=final_sector
         )
         
         if success:
-            logger.info(f"✅ Added {shares} shares of {ticker} -> {yf_ticker}")
+            logger.info(f"✅ Added {shares} shares of {ticker} -> {yf_ticker} ({final_company_name}) [{final_sector}]")
         else:
             logger.error(f"❌ Failed to add {shares} shares of {ticker} -> {yf_ticker}")
         
@@ -399,6 +403,42 @@ class KLSETradingEngine:
         except Exception as e:
             logger.error(f"Error converting ticker {ticker}: {e}")
             return None
+    
+    def _get_ticker_and_company_info(self, ticker: str) -> tuple[str, str, str]:
+        """
+        Get yfinance ticker, company name, and sector from i3investor
+        
+        Args:
+            ticker: Malaysian stock code or name (e.g., "MBMR", "1155", "GAMUDA")
+            
+        Returns:
+            Tuple of (yfinance_ticker, company_name, sector) or (None, None, None) if failed
+        """
+        try:
+            # If already in .KL format, return as is
+            if ticker.endswith('.KL'):
+                return ticker, "", ""
+            
+            # If it's a numeric code, add .KL suffix
+            if ticker.isdigit():
+                return f"{ticker}.KL", "", ""
+            
+            # For company names, extract ticker code, company name, and sector from i3investor
+            if hasattr(self, 'i3_scraper'):
+                ticker_code = self.i3_scraper.extract_ticker_code(ticker)
+                company_name = self.i3_scraper.get_company_name(ticker)
+                sector = self.i3_scraper.get_sector(ticker)
+                
+                if ticker_code:
+                    yf_ticker = f"{ticker_code}.KL"
+                    return yf_ticker, company_name or "", sector or ""
+            
+            # Fallback: assume it's a ticker name and add .KL
+            return f"{ticker}.KL", "", ""
+            
+        except Exception as e:
+            logger.error(f"Error getting ticker and company info for {ticker}: {e}")
+            return None, None, None
     
     def get_trading_summary(self) -> Dict[str, any]:
         """Get comprehensive trading summary"""
