@@ -495,6 +495,18 @@ class KLSEPortfolioManager:
                 total_stock_value += current_value
         
         return total_stock_value + self.current_cash_myr
+
+    def _safe_return_pct(self, numerator: float, denominator: float) -> float:
+        """Calculate percentage return safely, avoid division by zero.
+
+        Returns 0.0 if denominator is zero or None.
+        """
+        try:
+            if not denominator or denominator == 0:
+                return 0.0
+            return (numerator / denominator) * 100
+        except Exception:
+            return 0.0
     
     def _log_trade(self, action: str, ticker: str, shares: int, price: float, 
                    total_value: float, data_source: str):
@@ -593,14 +605,14 @@ class KLSEPortfolioManager:
                     'data_source': stock_data.get('source', 'unknown')
                 }
                 results.append(result)
-        
+
         # Save updated portfolio (after stop losses)
         self._save_portfolio()
-        
+
         # Calculate total portfolio metrics
         total_equity = total_value + self.current_cash_myr
-        total_return_pct = ((total_equity - self.starting_cash_myr) / self.starting_cash_myr) * 100
-        
+        total_return_pct = self._safe_return_pct((total_equity - self.starting_cash_myr), self.starting_cash_myr)
+
         summary = {
             'date': today,
             'total_stock_value': total_value,
@@ -612,9 +624,9 @@ class KLSEPortfolioManager:
             'stops_triggered': len(stops_triggered),
             'stop_details': stops_triggered
         }
-        
+
         logger.info(f"Daily update complete: {total_equity:.2f} MYR total equity ({total_return_pct:+.2f}%)")
-        
+
         return {
             'status': 'success',
             'summary': summary,
@@ -679,7 +691,7 @@ class KLSEPortfolioManager:
                 logger.warning(f"❌ Failed to get price data for {position['ticker']} ({position['company_name']})")
 
         total_equity = total_value + self.current_cash_myr
-        total_return_pct = ((total_equity - self.starting_cash_myr) / self.starting_cash_myr) * 100
+        total_return_pct = self._safe_return_pct((total_equity - self.starting_cash_myr), self.starting_cash_myr)
 
         return {
             'total_positions': len(positions),
