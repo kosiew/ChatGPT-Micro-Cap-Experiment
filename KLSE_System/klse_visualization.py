@@ -187,20 +187,23 @@ class KLSEVisualizationEngine:
         fig.suptitle('🇲🇾 ChatGPT KLSE Portfolio vs Malaysian Market Indices', 
                     fontsize=16, fontweight='bold')
         
-        # Normalize portfolio data
-        portfolio_normalized = self._normalize_to_base_value(portfolio_data, 10000.0)
-        portfolio_dates = pd.to_datetime(portfolio_normalized['date'])
+        # Use actual portfolio values instead of normalized
+        portfolio_dates = pd.to_datetime(portfolio_data['date'])
+        portfolio_values = portfolio_data['total_equity_myr']
         
-        # Plot portfolio performance (top chart)
-        ax1.plot(portfolio_dates, portfolio_normalized['normalized'], 
+        # Plot portfolio performance (top chart) - actual values
+        ax1.plot(portfolio_dates, portfolio_values, 
                 color=self.colors['portfolio'], linewidth=2.5, 
-                label='ChatGPT Portfolio', marker='o', markersize=4)
+                label='ChatGPT Portfolio (Actual MYR)', marker='o', markersize=4)
         
         # Add benchmark comparisons if available
         if not benchmark_data.empty:
             # Get date range for portfolio
             start_date = portfolio_dates.min().strftime('%Y-%m-%d')
             end_date = portfolio_dates.max().strftime('%Y-%m-%d')
+            
+            # Get initial portfolio value for scaling benchmarks
+            initial_portfolio_value = portfolio_values.iloc[0]
             
             for ticker, name in self.BENCHMARKS.items():
                 ticker_data = benchmark_data[benchmark_data['ticker'] == ticker].copy()
@@ -213,27 +216,31 @@ class KLSEVisualizationEngine:
                     ]
                     
                     if not ticker_data.empty:
-                        ticker_normalized = self._normalize_to_base_value(ticker_data, 10000.0)
+                        # Scale benchmark to start at same value as portfolio
+                        ticker_normalized = self._normalize_to_base_value(ticker_data, initial_portfolio_value)
                         ticker_dates = pd.to_datetime(ticker_normalized['date'])
                         
-                        # Plot benchmark
+                        # Plot benchmark scaled to portfolio's initial value
                         color = self.colors.get(ticker.lower().replace('^', '').replace('klse', 'klci'), '#888888')
                         ax1.plot(ticker_dates, ticker_normalized['normalized'], 
                                 color=color, linewidth=1.5, alpha=0.8,
-                                label=name.replace('FTSE Bursa Malaysia ', ''))
+                                label=name.replace('FTSE Bursa Malaysia ', '') + ' (scaled)')
         
         # Format top chart
-        ax1.set_title('Performance Comparison (Normalized to 10,000 MYR)', fontsize=12)
+        ax1.set_title('Portfolio Performance (Actual Values)', fontsize=12)
         ax1.set_ylabel('Portfolio Value (MYR)', fontsize=10)
         ax1.grid(True, alpha=0.3)
         ax1.legend(loc='upper left', fontsize=9)
         ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
         ax1.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
         
+        # Format Y-axis for large numbers
+        ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K' if x >= 1000 else f'{x:.0f}'))
+        
         # Add value annotations
-        if not portfolio_normalized.empty:
-            final_value = portfolio_normalized['normalized'].iloc[-1]
-            initial_value = portfolio_normalized['normalized'].iloc[0]
+        if not portfolio_data.empty:
+            final_value = portfolio_values.iloc[-1]
+            initial_value = portfolio_values.iloc[0]
             total_return = ((final_value - initial_value) / initial_value) * 100
             
             ax1.annotate(f'Final: {final_value:,.0f} MYR\nReturn: {total_return:+.2f}%',
