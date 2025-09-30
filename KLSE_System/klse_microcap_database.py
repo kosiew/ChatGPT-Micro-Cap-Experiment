@@ -147,6 +147,10 @@ class KLSEMicroCapDatabase:
     
     def _is_microcap(self, market_cap: float, price: float, volume: float) -> bool:
         """Check if stock meets micro-cap criteria"""
+        # Handle None values
+        if market_cap is None or price is None or volume is None:
+            return False
+        
         return (
             self.MIN_MARKET_CAP_MYR <= market_cap <= self.MICROCAP_THRESHOLD_MYR and
             price >= self.MIN_PRICE_MYR and
