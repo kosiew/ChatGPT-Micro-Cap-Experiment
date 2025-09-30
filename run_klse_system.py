@@ -13,6 +13,7 @@ import typer
 
 # Configuration
 SHOW_AI_RECOMMENDATIONS = False  # Set to True to show rule-based AI recommendations
+UPDATE_MICROCAP_DATABASE = False  # Set to True to update micro-cap database (updates stock prices in database)
 
 app = typer.Typer(
     name="klse-system",
@@ -84,11 +85,14 @@ def run_full_system(
         "KLSE Daily Trading Update"
     )
     
-    # Update micro-cap database
-    run_command(
-        "python KLSE_System/klse_microcap_database.py --action update",
-        "KLSE Micro-Cap Database Update"
-    )
+    # Update micro-cap database (optional)
+    if UPDATE_MICROCAP_DATABASE:
+        run_command(
+            "python KLSE_System/klse_microcap_database.py --action update",
+            "KLSE Micro-Cap Database Update"
+        )
+    else:
+        typer.echo("ℹ️  Skipping micro-cap database update (UPDATE_MICROCAP_DATABASE=False)")
     
     # Generate visualizations
     run_command(
@@ -129,11 +133,14 @@ def run_analysis_only():
     """Run only analysis and visualizations (no trading)"""
     show_header()
     
-    # Update micro-cap database
-    run_command(
-        "python KLSE_System/klse_microcap_database.py --action update",
-        "KLSE Micro-Cap Database Update"
-    )
+    # Update micro-cap database (optional)
+    if UPDATE_MICROCAP_DATABASE:
+        run_command(
+            "python KLSE_System/klse_microcap_database.py --action update",
+            "KLSE Micro-Cap Database Update"
+        )
+    else:
+        typer.echo("ℹ️  Skipping micro-cap database update (UPDATE_MICROCAP_DATABASE=False)")
     
     # Generate visualizations
     run_command(
