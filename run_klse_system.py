@@ -225,5 +225,33 @@ def sell_stock(
     
     run_command(command, f"Selling {shares} shares of {ticker}")
 
+@app.command("build")
+def build_database(
+    alpha_vantage_key: Annotated[
+        Optional[str], 
+        typer.Option("--alpha-vantage-key", "-k", help="Alpha Vantage API key")
+    ] = None
+):
+    """Build initial micro-cap database from seed stocks (first-time setup)"""
+    show_header()
+    typer.echo("🏗️  Building KLSE Micro-Cap Database from Seed Stocks...")
+    typer.echo("This will create:")
+    typer.echo("   - KLSE_System/klse_microcap_database.csv")
+    typer.echo("   - KLSE_System/klse_microcap_analysis.csv")
+    typer.echo("   - KLSE_System/klse_sectors.json")
+    typer.echo()
+    
+    command = "python KLSE_System/klse_microcap_database.py --action build"
+    if alpha_vantage_key:
+        command += f" --alpha-vantage-key {alpha_vantage_key}"
+    
+    success = run_command(command, "Building Database")
+    
+    if success:
+        typer.echo("\n✅ Database built successfully!")
+        typer.echo("You can now run: python run_klse_system.py full")
+    
+    show_generated_files()
+
 if __name__ == "__main__":
     app()
