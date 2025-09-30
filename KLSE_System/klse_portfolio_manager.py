@@ -72,8 +72,8 @@ class KLSEPortfolioManager:
     
     def _load_config(self):
         """Load configuration from JSON file"""
-        if self.config_path.exists():
-            with open(self.config_path, 'r') as f:
+        if os.path.exists(self.config_file):
+            with open(self.config_file, 'r') as f:
                 config = json.load(f)
                 self.current_cash_myr = config.get('current_cash_myr', self.starting_cash_myr)
                 # Load starting cash from config if available (for proper return calculation)
