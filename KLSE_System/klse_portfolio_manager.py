@@ -568,7 +568,7 @@ class KLSEPortfolioManager:
             
             # Check stop loss
             if current_price <= stop_loss:
-                # Trigger stop loss
+                # ALERT ONLY - Do not execute trade automatically
                 stops_triggered.append({
                     'ticker': ticker,
                     'shares': shares,
@@ -577,17 +577,29 @@ class KLSEPortfolioManager:
                     'pnl': position_pnl
                 })
                 
-                # Add cash from sale
-                self.current_cash_myr += position_value
+                # Log alert message
+                logger.warning(f"🚨 STOP LOSS ALERT: {ticker} has hit stop loss!")
+                logger.warning(f"   Current Price: {current_price:.3f} MYR | Stop Loss: {stop_loss:.3f} MYR")
+                logger.warning(f"   Position: {shares} shares | Potential Loss: {position_pnl:.2f} MYR")
+                logger.warning(f"   ⚠️  Manual action required - trade NOT automatically executed")
                 
-                # Log the sale
-                self._log_trade("SELL_STOP", ticker, shares, current_price, position_value, 
-                              stock_data.get('source', 'unknown'))
+                # Continue tracking the position (do not remove from portfolio)
+                total_value += position_value
+                total_pnl += position_pnl
                 
-                # Remove from portfolio
-                self.portfolio = self.portfolio.drop(idx)
-                
-                logger.warning(f"🚨 STOP LOSS: {ticker} sold at {current_price:.3f} MYR")
+                result = {
+                    'date': today,
+                    'ticker': ticker,
+                    'shares': shares,
+                    'cost_basis': cost_basis,
+                    'stop_loss': stop_loss,
+                    'current_price': current_price,
+                    'position_value': position_value,
+                    'position_pnl': position_pnl,
+                    'action': 'STOP_LOSS_ALERT',  # Mark as alert instead of HOLD
+                    'data_source': stock_data.get('source', 'unknown')
+                }
+                results.append(result)
                 
             else:
                 # Position continues

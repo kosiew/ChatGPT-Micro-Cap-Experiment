@@ -538,14 +538,42 @@ class KLSETradingEngine:
         if summary['positions']:
             report.append("📋 POSITION DETAILS")
             report.append("-" * 30)
+            
+            # Separate positions with stop loss alerts
+            alert_positions = []
+            normal_positions = []
+            
             for pos in summary['positions']:
-                pnl_symbol = "🟢" if pos['position_pnl'] >= 0 else "🔴"
-                report.append(f"{pnl_symbol} {pos['ticker']}: {pos['shares']} shares")
-                report.append(f"   Price: {pos['current_price']:.3f} MYR (Cost: {pos['avg_cost']:.3f})")
-                report.append(f"   Value: {pos['position_value']:,.2f} MYR")
-                report.append(f"   PnL: {pos['position_pnl']:+,.2f} MYR ({pos['position_return_pct']:+.2f}%)")
-                report.append(f"   Stop Loss: {pos['stop_loss']:.3f} MYR")
+                if pos['current_price'] <= pos['stop_loss']:
+                    alert_positions.append(pos)
+                else:
+                    normal_positions.append(pos)
+            
+            # Show stop loss alerts first
+            if alert_positions:
+                report.append("🚨 STOP LOSS ALERTS:")
                 report.append("")
+                for pos in alert_positions:
+                    report.append(f"⚠️  {pos['ticker']}: {pos['shares']} shares - STOP LOSS HIT")
+                    report.append(f"   Price: {pos['current_price']:.3f} MYR (Stop: {pos['stop_loss']:.3f})")
+                    report.append(f"   Value: {pos['position_value']:,.2f} MYR")
+                    report.append(f"   PnL: {pos['position_pnl']:+,.2f} MYR ({pos['position_return_pct']:+.2f}%)")
+                    report.append(f"   📋 ACTION REQUIRED: Manual sell decision needed")
+                    report.append("")
+            
+            # Show normal positions
+            if normal_positions:
+                if alert_positions:
+                    report.append("NORMAL POSITIONS:")
+                    report.append("")
+                for pos in normal_positions:
+                    pnl_symbol = "🟢" if pos['position_pnl'] >= 0 else "🔴"
+                    report.append(f"{pnl_symbol} {pos['ticker']}: {pos['shares']} shares")
+                    report.append(f"   Price: {pos['current_price']:.3f} MYR (Cost: {pos['avg_cost']:.3f})")
+                    report.append(f"   Value: {pos['position_value']:,.2f} MYR")
+                    report.append(f"   PnL: {pos['position_pnl']:+,.2f} MYR ({pos['position_return_pct']:+.2f}%)")
+                    report.append(f"   Stop Loss: {pos['stop_loss']:.3f} MYR")
+                    report.append("")
         else:
             report.append("📋 No active positions")
             report.append("")
@@ -579,8 +607,24 @@ def daily_processing(
         typer.echo(f"📈 Return: {summary['total_return_pct']:+.2f}%")
         typer.echo(f"🏢 Positions: {summary['positions']}")
         
+        # Display stop loss alerts prominently
         if summary['stops_triggered'] > 0:
-            typer.echo(f"🚨 Stop Losses: {summary['stops_triggered']}")
+            typer.echo("")
+            typer.echo("=" * 60)
+            typer.echo(f"🚨 STOP LOSS ALERTS: {summary['stops_triggered']} position(s) hit stop loss")
+            typer.echo("=" * 60)
+            
+            for alert in result['stops_triggered']:
+                typer.echo(f"\n⚠️  {alert['ticker']}")
+                typer.echo(f"   Current Price: {alert['stop_price']:.3f} MYR")
+                typer.echo(f"   Stop Loss: {alert['cost_basis'] * 0.85:.3f} MYR (15% below cost)")
+                typer.echo(f"   Shares: {alert['shares']}")
+                typer.echo(f"   Potential Loss: {alert['pnl']:.2f} MYR")
+                typer.echo(f"   📋 ACTION REQUIRED: Manual sell decision needed")
+            
+            typer.echo("\n" + "=" * 60)
+            typer.echo("⚠️  Trades NOT automatically executed - manual action required")
+            typer.echo("=" * 60)
     else:
         typer.echo(f"❌ Daily processing failed: {result}", err=True)
         raise typer.Exit(1)
