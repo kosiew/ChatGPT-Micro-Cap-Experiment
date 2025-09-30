@@ -9,7 +9,9 @@ import numpy as np
 from datetime import datetime, timezone, timedelta
 import os
 import sys
+import json
 import logging
+from pathlib import Path
 from typing import Dict, List, Optional
 import typer
 from typing_extensions import Annotated
@@ -48,10 +50,21 @@ class KLSETradingEngine:
     def __init__(self, alpha_vantage_key: str = None):
         self.alpha_vantage_key = alpha_vantage_key
         
+        # Load starting cash from config
+        config_path = Path(__file__).parent / "klse_config.json"
+        starting_cash = 204000.0  # Default fallback
+        if config_path.exists():
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                    starting_cash = config.get('starting_cash_myr', 204000.0)
+            except Exception as e:
+                logger.warning(f"Failed to load starting cash from config: {e}")
+        
         # Initialize portfolio manager
         if ENHANCED_AVAILABLE:
             self.portfolio_manager = KLSEPortfolioManager(
-                starting_cash_myr=0.0,  # Started with existing holdings, no cash
+                starting_cash_myr=starting_cash,
                 alpha_vantage_key=alpha_vantage_key
             )
             self.data_fetcher = KLSEDataFetcher(alpha_vantage_key)

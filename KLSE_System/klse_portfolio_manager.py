@@ -71,31 +71,15 @@ class KLSEPortfolioManager:
         logger.info(f"KLSE Portfolio Manager initialized with {self.current_cash_myr:.2f} MYR")
     
     def _load_config(self):
-        """Load or create system configuration"""
-        default_config = {
-            "starting_cash_myr": self.starting_cash_myr,
-            "board_lot_size": self.BOARD_LOT_SIZE,
-            "microcap_threshold_myr": self.MICROCAP_THRESHOLD_MYR,
-            "experiment_start_date": datetime.now().strftime("%Y-%m-%d"),
-            "experiment_end_date": (datetime.now() + timedelta(days=180)).strftime("%Y-%m-%d"),
-            "auto_stop_loss": True,
-            "max_position_size_pct": 20.0,  # Maximum 20% of portfolio in single stock
-            "rebalance_threshold_pct": 5.0,  # Rebalance if allocation drifts >5%
-        }
-        
-        if os.path.exists(self.config_file):
-            with open(self.config_file, 'r') as f:
-                self.config = json.load(f)
-                # Merge any new default settings
-                for key, value in default_config.items():
-                    if key not in self.config:
-                        self.config[key] = value
-        else:
-            self.config = default_config
-            
-        # Save updated config
-        with open(self.config_file, 'w') as f:
-            json.dump(self.config, f, indent=2)
+        """Load configuration from JSON file"""
+        if self.config_path.exists():
+            with open(self.config_path, 'r') as f:
+                config = json.load(f)
+                self.current_cash_myr = config.get('current_cash_myr', self.starting_cash_myr)
+                # Load starting cash from config if available (for proper return calculation)
+                if 'starting_cash_myr' in config:
+                    self.starting_cash_myr = config['starting_cash_myr']
+                # Load other config settings as needed
     
     def _load_portfolio(self) -> pd.DataFrame:
         """Load existing portfolio or create new one"""
@@ -130,6 +114,7 @@ class KLSEPortfolioManager:
                 config = {}
             
             config['current_cash_myr'] = self.current_cash_myr
+            config['starting_cash_myr'] = self.starting_cash_myr
             
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=2)
