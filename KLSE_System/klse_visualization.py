@@ -24,7 +24,9 @@ try:
 except ImportError:
     print("⚠️  Enhanced data fetcher not available, using basic yfinance")
     ENHANCED_DATA_AVAILABLE = False
-    import yfinance as yf
+
+# Always import yfinance for benchmark data
+import yfinance as yf
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -202,10 +204,14 @@ class KLSEVisualizationEngine:
             start_date = portfolio_dates.min().strftime('%Y-%m-%d')
             end_date = portfolio_dates.max().strftime('%Y-%m-%d')
             
+            logger.info(f"Portfolio date range: {start_date} to {end_date}")
+            
             for ticker, name in self.BENCHMARKS.items():
                 ticker_data = benchmark_data[benchmark_data['ticker'] == ticker].copy()
                 
                 if not ticker_data.empty:
+                    logger.info(f"Processing benchmark {ticker} ({name}): {len(ticker_data)} total days")
+                    
                     # Filter to portfolio date range
                     ticker_data = ticker_data[
                         (ticker_data['date'] >= start_date) & 
@@ -213,14 +219,20 @@ class KLSEVisualizationEngine:
                     ]
                     
                     if not ticker_data.empty:
+                        logger.info(f"  Filtered to {len(ticker_data)} days in portfolio range")
                         ticker_normalized = self._normalize_to_base_value(ticker_data, 10000.0)
                         ticker_dates = pd.to_datetime(ticker_normalized['date'])
                         
                         # Plot benchmark
                         color = self.colors.get(ticker.lower().replace('^', '').replace('klse', 'klci'), '#888888')
+                        logger.info(f"  Plotting {ticker} with color {color}")
                         ax1.plot(ticker_dates, ticker_normalized['normalized'], 
                                 color=color, linewidth=1.5, alpha=0.8,
                                 label=name.replace('FTSE Bursa Malaysia ', ''))
+                    else:
+                        logger.warning(f"  No data for {ticker} in portfolio date range")
+                else:
+                    logger.warning(f"No data found for benchmark {ticker}")
         
         # Format top chart
         ax1.set_title('Performance Comparison (Normalized to 10,000 MYR)', fontsize=12)
