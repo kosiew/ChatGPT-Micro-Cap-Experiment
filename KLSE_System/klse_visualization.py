@@ -256,8 +256,19 @@ class KLSEVisualizationEngine:
         
         # Daily returns chart (bottom)
         if len(portfolio_data) > 1:
-            portfolio_returns = portfolio_data['total_return_pct'].values
-            ax2.plot(portfolio_dates, portfolio_returns, 
+            # Calculate actual daily returns (day-over-day percentage change)
+            equity_values = portfolio_data['total_equity_myr'].values
+            daily_returns = np.zeros(len(equity_values))
+            
+            for i in range(1, len(equity_values)):
+                if equity_values[i-1] > 0:
+                    daily_returns[i] = ((equity_values[i] - equity_values[i-1]) / equity_values[i-1]) * 100
+            
+            # Plot daily returns (skip first day since no previous day to compare)
+            plot_dates = portfolio_dates[1:]
+            plot_returns = daily_returns[1:]
+            
+            ax2.plot(plot_dates, plot_returns, 
                     color=self.colors['portfolio'], linewidth=2, 
                     label='Daily Return %', marker='o', markersize=3)
             
@@ -265,10 +276,10 @@ class KLSEVisualizationEngine:
             ax2.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
             
             # Color positive/negative areas
-            ax2.fill_between(portfolio_dates, portfolio_returns, 0, 
-                           where=(portfolio_returns >= 0), color='green', alpha=0.3, interpolate=True)
-            ax2.fill_between(portfolio_dates, portfolio_returns, 0, 
-                           where=(portfolio_returns < 0), color='red', alpha=0.3, interpolate=True)
+            ax2.fill_between(plot_dates, plot_returns, 0, 
+                           where=(plot_returns >= 0), color='green', alpha=0.3, interpolate=True)
+            ax2.fill_between(plot_dates, plot_returns, 0, 
+                           where=(plot_returns < 0), color='red', alpha=0.3, interpolate=True)
         
         # Format bottom chart
         ax2.set_title('Daily Portfolio Returns', fontsize=12)
@@ -306,19 +317,34 @@ class KLSEVisualizationEngine:
             return "No data available"
         
         # Calculate statistics
-        total_return = portfolio_data['total_return_pct'].iloc[-1] if len(portfolio_data) > 0 else 0
+        equity_values = portfolio_data['total_equity_myr'].values
+        starting_equity = equity_values[0]
+        current_equity = equity_values[-1]
+        total_return = ((current_equity - starting_equity) / starting_equity) * 100
+        
         max_equity = portfolio_data['total_equity_myr'].max()
         min_equity = portfolio_data['total_equity_myr'].min()
-        current_equity = portfolio_data['total_equity_myr'].iloc[-1]
         max_drawdown = ((max_equity - min_equity) / max_equity) * 100 if max_equity > 0 else 0
         
-        # Volatility (if enough data)
-        volatility = portfolio_data['total_return_pct'].std() if len(portfolio_data) > 1 else 0
-        
-        # Win rate (days with positive returns)
-        positive_days = len(portfolio_data[portfolio_data['total_return_pct'] > 0])
-        total_days = len(portfolio_data)
-        win_rate = (positive_days / total_days) * 100 if total_days > 0 else 0
+        # Calculate actual daily returns for volatility and win rate
+        if len(portfolio_data) > 1:
+            daily_returns = np.zeros(len(equity_values))
+            for i in range(1, len(equity_values)):
+                if equity_values[i-1] > 0:
+                    daily_returns[i] = ((equity_values[i] - equity_values[i-1]) / equity_values[i-1]) * 100
+            
+            # Volatility (std of daily returns, excluding first day)
+            volatility = daily_returns[1:].std()
+            
+            # Win rate (days with positive returns, excluding first day)
+            positive_days = np.sum(daily_returns[1:] > 0)
+            total_trading_days = len(daily_returns) - 1
+            win_rate = (positive_days / total_trading_days) * 100 if total_trading_days > 0 else 0
+        else:
+            volatility = 0
+            positive_days = 0
+            total_trading_days = 0
+            win_rate = 0
         
         stats = [
             f"📊 PERFORMANCE STATISTICS",
@@ -326,8 +352,8 @@ class KLSEVisualizationEngine:
             f"Total Return: {total_return:+.2f}%",
             f"Max Drawdown: {max_drawdown:.2f}%",
             f"Volatility: {volatility:.2f}%",
-            f"Win Rate: {win_rate:.1f}% ({positive_days}/{total_days} days)",
-            f"Data Points: {total_days} days"
+            f"Win Rate: {win_rate:.1f}% ({positive_days}/{total_trading_days} days)",
+            f"Data Points: {len(portfolio_data)} days"
         ]
         
         return "\n".join(stats)
