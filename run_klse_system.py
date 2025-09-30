@@ -11,6 +11,9 @@ from datetime import datetime
 from typing import Annotated, Optional
 import typer
 
+# Configuration
+SHOW_AI_RECOMMENDATIONS = False  # Set to True to show rule-based AI recommendations
+
 app = typer.Typer(
     name="klse-system",
     help="🇲🇾 Complete KLSE System Runner - Manage Malaysian stock trading and analysis",
@@ -93,11 +96,14 @@ def run_full_system(
         "KLSE Visualization Generation"
     )
     
-    # Show AI recommendations
-    run_command(
-        "python KLSE_System/klse_microcap_database.py --action recommend --limit 5",
-        "KLSE AI Stock Recommendations"
-    )
+    # Show AI recommendations (optional - rule-based only)
+    if SHOW_AI_RECOMMENDATIONS:
+        run_command(
+            "python KLSE_System/klse_microcap_database.py --action recommend --limit 5",
+            "KLSE AI Stock Recommendations"
+        )
+    else:
+        typer.echo("ℹ️  Skipping rule-based AI recommendations (SHOW_AI_RECOMMENDATIONS=False)")
     
     show_generated_files()
 
@@ -135,11 +141,14 @@ def run_analysis_only():
         "KLSE Visualization Generation"
     )
     
-    # Show AI recommendations
-    run_command(
-        "python KLSE_System/klse_microcap_database.py --action recommend --limit 5",
-        "KLSE AI Stock Recommendations"
-    )
+    # Show AI recommendations (optional - rule-based only)
+    if SHOW_AI_RECOMMENDATIONS:
+        run_command(
+            "python KLSE_System/klse_microcap_database.py --action recommend --limit 5",
+            "KLSE AI Stock Recommendations"
+        )
+    else:
+        typer.echo("ℹ️  Skipping rule-based AI recommendations (SHOW_AI_RECOMMENDATIONS=False)")
     
     show_generated_files()
 
