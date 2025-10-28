@@ -630,7 +630,7 @@ def daily_processing(
             for alert in result['stops_triggered']:
                 typer.echo(f"\n⚠️  {alert['ticker']}")
                 typer.echo(f"   Current Price: {alert['stop_price']:.3f} MYR")
-                typer.echo(f"   Stop Loss: {alert['cost_basis'] * 0.85:.3f} MYR (15% below cost)")
+                typer.echo(f"   Stop Loss: {alert['stop_loss']:.3f} MYR (15% below cost)")
                 typer.echo(f"   Shares: {alert['shares']}")
                 typer.echo(f"   Potential Loss: {alert['pnl']:.2f} MYR")
                 typer.echo(f"   📋 ACTION REQUIRED: Manual sell decision needed")

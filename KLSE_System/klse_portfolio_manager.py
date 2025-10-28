@@ -81,11 +81,114 @@ class KLSEPortfolioManager:
                     self.starting_cash_myr = config['starting_cash_myr']
                 # Load other config settings as needed
     
+    def _validate_portfolio_data(self, portfolio: pd.DataFrame) -> pd.DataFrame:
+        """
+        Validate portfolio data and fix/flag issues
+        
+        Checks:
+        1. Cost basis must be > 0
+        2. Stop loss must be < cost basis (15% below)
+        3. Shares must be > 0
+        4. Stop loss should be approximately 85% of cost basis (within reason)
+        """
+        if portfolio.empty:
+            return portfolio
+        
+        validation_errors = []
+        fixed_positions = []
+        
+        for idx, row in portfolio.iterrows():
+            ticker = row['ticker']
+            avg_cost = row['avg_cost_myr']
+            stop_loss = row['stop_loss_myr']
+            shares = row['shares']
+            
+            has_error = False
+            error_details = []
+            
+            # Validation 1: Cost basis must be positive
+            if avg_cost <= 0:
+                has_error = True
+                error_details.append(f"Invalid cost basis: {avg_cost:.3f} MYR (must be > 0)")
+            
+            # Validation 2: Shares must be positive
+            if shares <= 0:
+                has_error = True
+                error_details.append(f"Invalid shares: {shares} (must be > 0)")
+            
+            # Validation 3: Stop loss must be less than cost basis
+            if avg_cost > 0 and stop_loss >= avg_cost:
+                has_error = True
+                error_details.append(
+                    f"Invalid stop loss: {stop_loss:.3f} MYR >= cost basis {avg_cost:.3f} MYR "
+                    f"(stop loss must be below cost basis)"
+                )
+            
+            # Validation 4: Stop loss should be approximately 85% of cost (allow 70-95% range)
+            if avg_cost > 0:
+                stop_loss_ratio = stop_loss / avg_cost
+                expected_ratio = 0.85  # 15% below cost
+                
+                # Allow reasonable variance (70% to 95% of cost basis)
+                if stop_loss_ratio < 0.70 or stop_loss_ratio > 0.95:
+                    has_error = True
+                    error_details.append(
+                        f"Suspicious stop loss ratio: {stop_loss_ratio:.2%} of cost basis "
+                        f"(expected ~85%, got {stop_loss:.3f} MYR vs cost {avg_cost:.3f} MYR)"
+                    )
+            
+            # Validation 5: Stop loss must be positive
+            if stop_loss <= 0:
+                has_error = True
+                error_details.append(f"Invalid stop loss: {stop_loss:.3f} MYR (must be > 0)")
+            
+            if has_error:
+                validation_errors.append({
+                    'ticker': ticker,
+                    'company': row.get('company_name', 'Unknown'),
+                    'shares': shares,
+                    'cost_basis': avg_cost,
+                    'stop_loss': stop_loss,
+                    'errors': error_details
+                })
+                
+                logger.warning(f"⚠️  Data validation failed for {ticker}:")
+                for error in error_details:
+                    logger.warning(f"    - {error}")
+        
+        # Report all validation errors
+        if validation_errors:
+            logger.error("=" * 80)
+            logger.error("🚨 PORTFOLIO DATA VALIDATION ERRORS DETECTED")
+            logger.error("=" * 80)
+            logger.error(f"Found {len(validation_errors)} position(s) with data integrity issues:\n")
+            
+            for i, error_info in enumerate(validation_errors, 1):
+                logger.error(f"{i}. {error_info['ticker']} ({error_info['company']})")
+                logger.error(f"   Shares: {error_info['shares']}")
+                logger.error(f"   Cost Basis: {error_info['cost_basis']:.3f} MYR")
+                logger.error(f"   Stop Loss: {error_info['stop_loss']:.3f} MYR")
+                logger.error(f"   Issues:")
+                for err in error_info['errors']:
+                    logger.error(f"     • {err}")
+                logger.error("")
+            
+            logger.error("=" * 80)
+            logger.error("⚠️  ACTION REQUIRED: Please manually correct the portfolio CSV file")
+            logger.error(f"   File location: {self.portfolio_file}")
+            logger.error("   These positions will continue to be tracked but may cause errors")
+            logger.error("=" * 80)
+        
+        return portfolio
+    
     def _load_portfolio(self) -> pd.DataFrame:
         """Load existing portfolio or create new one"""
         if os.path.exists(self.portfolio_file):
             portfolio = pd.read_csv(self.portfolio_file)
             logger.info(f"Loaded existing portfolio with {len(portfolio)} positions")
+            
+            # Validate loaded portfolio data
+            portfolio = self._validate_portfolio_data(portfolio)
         else:
             # Create empty portfolio
             portfolio = pd.DataFrame(columns=[
@@ -98,11 +201,50 @@ class KLSEPortfolioManager:
     
     def _save_portfolio(self):
         """Save portfolio to CSV and update cash balance in config"""
+        # Validate before saving to prevent data corruption
+        if not self.portfolio.empty:
+            validation_result = self._validate_before_save(self.portfolio)
+            if not validation_result['valid']:
+                logger.error("❌ Portfolio validation failed - NOT SAVING to prevent data corruption")
+                logger.error(f"   Errors: {validation_result['errors']}")
+                raise ValueError(f"Portfolio validation failed: {validation_result['errors']}")
+        
         self.portfolio.to_csv(self.portfolio_file, index=False)
         logger.info(f"Portfolio saved to {self.portfolio_file}")
         
         # Also save current cash balance to config file
         self._save_cash_balance()
+    
+    def _validate_before_save(self, portfolio: pd.DataFrame) -> dict:
+        """
+        Quick validation before saving to prevent obvious data corruption
+        Returns: {'valid': bool, 'errors': list}
+        """
+        errors = []
+        
+        for idx, row in portfolio.iterrows():
+            ticker = row['ticker']
+            avg_cost = row['avg_cost_myr']
+            stop_loss = row['stop_loss_myr']
+            shares = row['shares']
+            
+            # Critical validations that must pass
+            if avg_cost <= 0:
+                errors.append(f"{ticker}: cost_basis={avg_cost} must be > 0")
+            
+            if shares <= 0:
+                errors.append(f"{ticker}: shares={shares} must be > 0")
+            
+            if stop_loss <= 0:
+                errors.append(f"{ticker}: stop_loss={stop_loss} must be > 0")
+            
+            if avg_cost > 0 and stop_loss >= avg_cost:
+                errors.append(f"{ticker}: stop_loss={stop_loss} must be < cost_basis={avg_cost}")
+        
+        return {
+            'valid': len(errors) == 0,
+            'errors': errors
+        }
     
     def _save_cash_balance(self):
         """Save current cash balance to config file"""
@@ -312,6 +454,19 @@ class KLSEPortfolioManager:
             company_name: Company name for records
             sector: Business sector
         """
+        # Input validation
+        if shares <= 0:
+            logger.error(f"Invalid shares: {shares} (must be > 0)")
+            return {'success': False, 'error': 'Shares must be positive'}
+        
+        if price is not None and price <= 0:
+            logger.error(f"Invalid price: {price} (must be > 0)")
+            return {'success': False, 'error': 'Price must be positive'}
+        
+        if stop_loss_pct < 0 or stop_loss_pct >= 100:
+            logger.error(f"Invalid stop loss percentage: {stop_loss_pct}% (must be between 0 and 100)")
+            return {'success': False, 'error': 'Stop loss percentage must be between 0 and 100'}
+        
         # Ensure .KL suffix for data fetching
         full_ticker = f"{ticker}.KL" if not ticker.endswith('.KL') else ticker
         
@@ -326,6 +481,12 @@ class KLSEPortfolioManager:
                 logger.error(f"Could not fetch data for {full_ticker}")
                 return {'success': False, 'error': 'Could not fetch market data'}
             current_price = stock_data['price']
+        
+        # Validate current price
+        if current_price <= 0:
+            logger.error(f"Invalid market price for {full_ticker}: {current_price}")
+            return {'success': False, 'error': 'Invalid market price'}
+        
         cost = current_price * shares
         
         # Auto-inject cash if needed (simulates adding money to account)
@@ -338,6 +499,15 @@ class KLSEPortfolioManager:
         
         # Calculate stop loss price
         stop_loss_price = current_price * (1 - stop_loss_pct / 100)
+        
+        # Validate stop loss calculation
+        if stop_loss_price <= 0:
+            logger.error(f"Invalid stop loss calculation: {stop_loss_price} (check stop_loss_pct: {stop_loss_pct}%)")
+            return {'success': False, 'error': 'Invalid stop loss calculation'}
+        
+        if stop_loss_price >= current_price:
+            logger.error(f"Stop loss {stop_loss_price:.3f} is not below cost basis {current_price:.3f}")
+            return {'success': False, 'error': 'Stop loss must be below cost basis'}
         
         # Create new position
         new_position = {
@@ -559,6 +729,7 @@ class KLSEPortfolioManager:
                     'shares': shares,
                     'stop_price': current_price,
                     'cost_basis': cost_basis,
+                    'stop_loss': stop_loss,
                     'pnl': position_pnl
                 })
                 
