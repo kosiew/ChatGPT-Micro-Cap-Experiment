@@ -238,8 +238,8 @@ class KLSEPortfolioManager:
             if stop_loss <= 0:
                 errors.append(f"{ticker}: stop_loss={stop_loss} must be > 0")
             
-            if avg_cost > 0 and stop_loss >= avg_cost:
-                errors.append(f"{ticker}: stop_loss={stop_loss} must be < cost_basis={avg_cost}")
+            # Note: stop_loss CAN be >= avg_cost for trailing stops to lock in profits
+            # Only validate that stop_loss is positive and reasonable
         
         return {
             'valid': len(errors) == 0,
