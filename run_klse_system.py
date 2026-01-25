@@ -88,7 +88,7 @@ def ensure_watched_file():
         with open(WATCHED_FILE, "w", newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             # Add display_name column to store friendly label like 'GAMUDA'
-            writer.writerow(["date_added","ticker","display_name","interested_price_myr","notes"])
+            writer.writerow(["date_added","ticker","display_name","interested_buy_price_myr","notes"])
 
 
 def load_ticker_mappings() -> dict:
@@ -181,8 +181,8 @@ def _derive_display_name_from_database(ticker: str) -> str:
     return prefix
 
 
-def add_watch_entry(ticker: str, interested_price: float, notes: str = ""):
-    """Add or update a watch entry"""
+def add_watch_entry(ticker: str, interested_buy_price: float, notes: str = ""):
+    """Add or update a watch entry (interested_buy_price is the price you'd like to buy at)"""
     ensure_watched_file()
     rows = []
     updated = False
@@ -193,21 +193,24 @@ def add_watch_entry(ticker: str, interested_price: float, notes: str = ""):
     with open(WATCHED_FILE, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for r in reader:
-            # normalize missing display_name for compatibility with older files
+            # normalize missing display_name and ensure backward compatibility for price field
             if 'display_name' not in r:
                 r['display_name'] = ''
+            # migrate old key if present
+            if 'interested_price_myr' in r and 'interested_buy_price_myr' not in r:
+                r['interested_buy_price_myr'] = r.get('interested_price_myr')
             if r["ticker"].lower() == ticker_norm.lower():
-                r["interested_price_myr"] = f"{interested_price}"
+                r["interested_buy_price_myr"] = f"{interested_buy_price}"
                 r["date_added"] = now
                 r["notes"] = notes
                 r["display_name"] = display_name
                 updated = True
             rows.append(r)
     if not updated:
-        rows.append({"date_added": now, "ticker": ticker_norm, "display_name": display_name, "interested_price_myr": f"{interested_price}", "notes": notes})
+        rows.append({"date_added": now, "ticker": ticker_norm, "display_name": display_name, "interested_buy_price_myr": f"{interested_buy_price}", "notes": notes})
     # Write back
     with open(WATCHED_FILE, "w", newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_price_myr","notes"])
+        writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_buy_price_myr","notes"])
         writer.writeheader()
         writer.writerows(rows)
 
@@ -251,13 +254,15 @@ def show_watched_section():
     for w in watched:
         ticker = w.get("ticker")
         display = w.get("display_name") or (ticker.split('.')[0] if ticker else "")
+        # support both new and legacy column names
         try:
-            interested = float(w.get("interested_price_myr", ''))
+            interested = float(w.get("interested_buy_price_myr", w.get("interested_price_myr", '')))
         except Exception:
             interested = None
         current = get_current_price(ticker) if ticker else None
         if current is None or interested is None:
-            typer.echo(f"   • {display} ({ticker}) - target: {w.get('interested_price_myr')} MYR - current: N/A")
+            target = w.get('interested_buy_price_myr') or w.get('interested_price_myr')
+            typer.echo(f"   • {display} ({ticker}) - target: {target} MYR - current: N/A")
         else:
             delta = current - interested
             pct = (delta / interested) * 100 if interested != 0 else 0
@@ -276,10 +281,7 @@ def ensure_alerts_file():
     if not Path(ALERTS_FILE).exists():
         with open(ALERTS_FILE, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(["date","ticker","display_name","interested_price_myr","current_price_myr","delta","pct"]) 
-
-
-def _send_macos_notification(message: str):
+            writer.writerow(["date","ticker","display_name","interested_buy_price_myr","current_price_myr","delta","pct"])
     import sys
     if sys.platform != 'darwin':
         return False
@@ -291,7 +293,7 @@ def _send_macos_notification(message: str):
 
 
 def check_watched_targets(notify: bool = False, mark: bool = True) -> list:
-    """Check watched counters and return list of alert dicts where current_price <= interested_price.
+    """Check watched counters and return list of alert dicts where current_price <= interested buy price.
     If mark is True append alerts to ALERTS_FILE. If notify True, send macOS notification (if supported).
     """
     hits = []
@@ -299,8 +301,9 @@ def check_watched_targets(notify: bool = False, mark: bool = True) -> list:
     for w in watched:
         ticker = w.get('ticker')
         display = w.get('display_name') or (ticker.split('.')[0] if ticker else '')
+        # support legacy name and new name
         try:
-            interested = float(w.get('interested_price_myr',''))
+            interested = float(w.get('interested_buy_price_myr', w.get('interested_price_myr','')))
         except Exception:
             continue
         current = get_current_price(ticker) if ticker else None
@@ -314,7 +317,7 @@ def check_watched_targets(notify: bool = False, mark: bool = True) -> list:
                 'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'ticker': ticker,
                 'display_name': display,
-                'interested_price_myr': f"{interested}",
+                'interested_buy_price_myr': f"{interested}",
                 'current_price_myr': f"{current}",
                 'delta': f"{delta}",
                 'pct': f"{pct}"
@@ -323,14 +326,22 @@ def check_watched_targets(notify: bool = False, mark: bool = True) -> list:
             # notification
             if notify:
                 msg = f"{display} ({ticker}) hit target {interested:.3f} MYR — current {current:.3f} MYR"
-                _send_macos_notification(msg)
+                # call notification helper if available, else fallback to subprocess.run
+                nf = globals().get('_send_macos_notification')
+                if callable(nf):
+                    nf(msg)
+                else:
+                    try:
+                        subprocess.run(["osascript", "-e", f'display notification "{msg}" with title "KLSE Watch Alert"'], check=False)
+                    except Exception:
+                        pass
     # write to alerts file
     if mark and hits:
         ensure_alerts_file()
         with open(ALERTS_FILE, 'a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             for h in hits:
-                writer.writerow([h['date'], h['ticker'], h['display_name'], h['interested_price_myr'], h['current_price_myr'], h['delta'], h['pct']])
+                writer.writerow([h['date'], h['ticker'], h['display_name'], h['interested_buy_price_myr'], h['current_price_myr'], h['delta'], h['pct']])
     return hits
 
 @app.command("full")
@@ -481,13 +492,13 @@ app.add_typer(watch_app, name="watch")
 @watch_app.command("add")
 def watch_add(
     counter: Annotated[str, typer.Argument(help="Stock ticker or symbol to watch (e.g., GAMUDA, JAKS, or 4723)")],
-    interested_put_price: Annotated[float, typer.Argument(help="Interested put price in MYR")],
+    interested_buy_price: Annotated[float, typer.Argument(help="Interested buy price in MYR")],
     notes: Annotated[Optional[str], typer.Option("--notes", "-n", help="Optional notes")] = None
 ):
     """Add or update a watched counter"""
     ticker_norm = _normalize_ticker(counter)
-    add_watch_entry(ticker_norm, interested_put_price, notes or "")
-    typer.echo(f"✅ Added/Updated watch for {ticker_norm} at target {interested_put_price:.3f} MYR")
+    add_watch_entry(ticker_norm, interested_buy_price, notes or "")
+    typer.echo(f"✅ Added/Updated watch for {ticker_norm} at target {interested_buy_price:.3f} MYR")
     show_watched_section()
 
 
@@ -503,12 +514,13 @@ def show_watched_list():
         display = r.get('display_name') or (ticker.split('.')[0] if ticker else '')
         notes = r.get('notes','')
         try:
-            interested = float(r.get('interested_price_myr',''))
+            interested = float(r.get('interested_buy_price_myr', r.get('interested_price_myr','')))
         except Exception:
             interested = None
         current = get_current_price(ticker) if ticker else None
         if current is None or interested is None:
-            typer.echo(f" {i:>2}) {display} ({ticker}) - target: {r.get('interested_price_myr')} MYR - current: N/A - {notes}")
+            target = r.get('interested_buy_price_myr') or r.get('interested_price_myr')
+            typer.echo(f" {i:>2}) {display} ({ticker}) - target: {target} MYR - current: N/A - {notes}")
         else:
             delta = current - interested
             pct = (delta / interested) * 100 if interested != 0 else 0
@@ -527,7 +539,7 @@ def watch_check(
     notify: Annotated[bool, typer.Option("--notify", "-n", help="Send macOS notifications for hits")] = False,
     mark: Annotated[bool, typer.Option("--no-mark", "-m", help="Don't append hits to alerts file", show_default=True)] = True
 ):
-    """Check watched counters and report hits (current price <= interested put price)"""
+    """Check watched counters and report hits (current price <= interested buy price)"""
     hits = check_watched_targets(notify=notify, mark=mark)
     if not hits:
         typer.echo("\n✅ No targets hit")
@@ -537,7 +549,7 @@ def watch_check(
         delta = float(h['delta'])
         pct = float(h['pct'])
         sign = "+" if delta >= 0 else "-"
-        typer.echo(f" • {h['display_name']} ({h['ticker']}) - target: {float(h['interested_price_myr']):.3f} MYR - current: {float(h['current_price_myr']):.3f} MYR ({sign}{abs(delta):.3f} MYR, {sign}{abs(pct):.2f}%)")
+        typer.echo(f" • {h['display_name']} ({h['ticker']}) - target: {float(h['interested_buy_price_myr']):.3f} MYR - current: {float(h['current_price_myr']):.3f} MYR ({sign}{abs(delta):.3f} MYR, {sign}{abs(pct):.2f}%)")
     typer.echo(f"\nLogged {len(hits)} hit(s) to {ALERTS_FILE} (if marking enabled)")
 
 
@@ -555,7 +567,7 @@ def remove_watch_entry(identifier: str) -> tuple[bool,str]:
             removed = rows.pop(idx-1)
             # write back
             with open(WATCHED_FILE, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_price_myr","notes"])
+                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_buy_price_myr","notes"])
                 writer.writeheader()
                 writer.writerows(rows)
             return True, f"Removed {removed.get('display_name') or removed.get('ticker')}"
@@ -572,7 +584,7 @@ def remove_watch_entry(identifier: str) -> tuple[bool,str]:
         if ident == ticker or ident == tprefix or ident == display or display.startswith(ident) or tprefix.startswith(ident):
             rows.remove(r)
             with open(WATCHED_FILE, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_price_myr","notes"])
+                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_buy_price_myr","notes"])
                 writer.writeheader()
                 writer.writerows(rows)
             return True, f"Removed {r.get('display_name') or r.get('ticker')}"
@@ -592,12 +604,12 @@ def edit_watch_entry(identifier: str, new_price: float | None = None, new_notes:
         if 1 <= idx <= len(rows):
             r = rows[idx-1]
             if new_price is not None:
-                r['interested_price_myr'] = f"{new_price}"
+                r['interested_buy_price_myr'] = f"{new_price}"
             if new_notes is not None:
                 r['notes'] = new_notes
             r['date_added'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with open(WATCHED_FILE, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_price_myr","notes"])
+                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_buy_price_myr","notes"])
                 writer.writeheader()
                 writer.writerows(rows)
             return True, f"Updated {r.get('display_name') or r.get('ticker')}"
@@ -613,12 +625,12 @@ def edit_watch_entry(identifier: str, new_price: float | None = None, new_notes:
         tprefix = ticker.split('.')[0] if ticker else ''
         if ident == ticker or ident == tprefix or ident == display or display.startswith(ident) or tprefix.startswith(ident):
             if new_price is not None:
-                r['interested_price_myr'] = f"{new_price}"
+                r['interested_buy_price_myr'] = f"{new_price}"
             if new_notes is not None:
                 r['notes'] = new_notes
             r['date_added'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with open(WATCHED_FILE, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_price_myr","notes"])
+                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_buy_price_myr","notes"])
                 writer.writeheader()
                 writer.writerows(rows)
             return True, f"Updated {r.get('display_name') or r.get('ticker')}"
@@ -657,11 +669,11 @@ def watch_edit(
 @app.command("watch")
 def watch_counter(
     counter: Annotated[str, typer.Argument(help="Stock ticker or symbol to watch (e.g., GAMUDA, JAKS, or 4723)")],
-    interested_put_price: Annotated[float, typer.Argument(help="Interested put price in MYR")],
+    interested_buy_price: Annotated[float, typer.Argument(help="Interested buy price in MYR")],
     notes: Annotated[Optional[str], typer.Option("--notes", "-n", help="Optional notes")] = None
 ):
     """Legacy: add or update a watched counter (kept for backward compatibility)"""
-    watch_add(counter, interested_put_price, notes)
+    watch_add(counter, interested_buy_price, notes)
 
 @app.command("buy")
 def buy_stock(

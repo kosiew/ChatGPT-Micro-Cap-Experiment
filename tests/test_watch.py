@@ -44,7 +44,7 @@ def test_add_and_load(monkeypatch):
     assert len(rows) == 1
     assert rows[0]['ticker'] == '4723.KL'
     assert rows[0]['display_name'] == 'JAKS'
-    assert rows[0]['interested_price_myr'] == '0.11'
+    assert rows[0]['interested_buy_price_myr'] == '0.11'
     assert rows[0]['notes'] == 'test'
 
 
@@ -64,13 +64,13 @@ def test_edit_by_index_and_by_name(monkeypatch):
     res = runner.invoke(r.app, ['watch', 'edit', '1', '--price', '0.15', '--notes', 'updated'])
     assert res.exit_code == 0
     rows = r.load_watched_counters()
-    assert rows[0]['interested_price_myr'] == '0.15'
+    assert rows[0]['interested_buy_price_myr'] == '0.15'
     assert rows[0]['notes'] == 'updated'
     # edit by name
     res2 = runner.invoke(r.app, ['watch', 'edit', 'jaks', '--price', '0.2'])
     assert res2.exit_code == 0
     rows = r.load_watched_counters()
-    assert rows[0]['interested_price_myr'] == '0.2'
+    assert rows[0]['interested_buy_price_myr'] == '0.2'
 
 
 def test_remove_by_index_and_name(monkeypatch):
