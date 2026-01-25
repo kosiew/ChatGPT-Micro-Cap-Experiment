@@ -266,12 +266,81 @@ def show_watched_section():
 
 # --- End watched helpers ---
 
+ALERTS_FILE = "KLSE_System/klse_watched_alerts.csv"
+
+
+def ensure_alerts_file():
+    parent = Path(ALERTS_FILE).parent
+    if not parent.exists():
+        parent.mkdir(parents=True, exist_ok=True)
+    if not Path(ALERTS_FILE).exists():
+        with open(ALERTS_FILE, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(["date","ticker","display_name","interested_price_myr","current_price_myr","delta","pct"]) 
+
+
+def _send_macos_notification(message: str):
+    import sys
+    if sys.platform != 'darwin':
+        return False
+    try:
+        subprocess.run(["osascript", "-e", f'display notification "{message}" with title "KLSE Watch Alert"'], check=False)
+        return True
+    except Exception:
+        return False
+
+
+def check_watched_targets(notify: bool = False, mark: bool = True) -> list:
+    """Check watched counters and return list of alert dicts where current_price <= interested_price.
+    If mark is True append alerts to ALERTS_FILE. If notify True, send macOS notification (if supported).
+    """
+    hits = []
+    watched = load_watched_counters()
+    for w in watched:
+        ticker = w.get('ticker')
+        display = w.get('display_name') or (ticker.split('.')[0] if ticker else '')
+        try:
+            interested = float(w.get('interested_price_myr',''))
+        except Exception:
+            continue
+        current = get_current_price(ticker) if ticker else None
+        if current is None:
+            continue
+        # consider hit when current <= interested (target buy)
+        if current <= interested:
+            delta = current - interested
+            pct = (delta / interested) * 100 if interested != 0 else 0
+            hit = {
+                'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'ticker': ticker,
+                'display_name': display,
+                'interested_price_myr': f"{interested}",
+                'current_price_myr': f"{current}",
+                'delta': f"{delta}",
+                'pct': f"{pct}"
+            }
+            hits.append(hit)
+            # notification
+            if notify:
+                msg = f"{display} ({ticker}) hit target {interested:.3f} MYR — current {current:.3f} MYR"
+                _send_macos_notification(msg)
+    # write to alerts file
+    if mark and hits:
+        ensure_alerts_file()
+        with open(ALERTS_FILE, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            for h in hits:
+                writer.writerow([h['date'], h['ticker'], h['display_name'], h['interested_price_myr'], h['current_price_myr'], h['delta'], h['pct']])
+    return hits
+
 @app.command("full")
 def run_full_system(
     alpha_vantage_key: Annotated[
         Optional[str], 
         typer.Option("--alpha-vantage-key", "-k", help="Alpha Vantage API key")
-    ] = None
+    ] = None,
+    alert: Annotated[bool, typer.Option("--alert", help="Check watched counters for hits and alert if targets hit")] = False,
+    notify: Annotated[bool, typer.Option("--notify", "-n", help="Send macOS notifications for hits (only on macOS)")] = False
 ):
     """Run the complete KLSE system (trading + analysis + visualizations)"""
     show_header()
@@ -308,6 +377,12 @@ def run_full_system(
     
     # Show watched counters summary
     show_watched_section()
+
+    # Optionally check and alert on hits
+    if alert:
+        hits = check_watched_targets(notify=notify, mark=True)
+        if hits:
+            typer.echo("\n⚠️  Watch Alerts generated. Use 'run_klse_system.py watch check' to review.")
 
     show_generated_files()
 
@@ -445,6 +520,25 @@ def show_watched_list():
 def watch_list():
     """List watched counters"""
     show_watched_list()
+
+
+@watch_app.command("check")
+def watch_check(
+    notify: Annotated[bool, typer.Option("--notify", "-n", help="Send macOS notifications for hits")] = False,
+    mark: Annotated[bool, typer.Option("--no-mark", "-m", help="Don't append hits to alerts file", show_default=True)] = True
+):
+    """Check watched counters and report hits (current price <= interested put price)"""
+    hits = check_watched_targets(notify=notify, mark=mark)
+    if not hits:
+        typer.echo("\n✅ No targets hit")
+        return
+    typer.echo("\n🚨 Targets Hit:")
+    for h in hits:
+        delta = float(h['delta'])
+        pct = float(h['pct'])
+        sign = "+" if delta >= 0 else "-"
+        typer.echo(f" • {h['display_name']} ({h['ticker']}) - target: {float(h['interested_price_myr']):.3f} MYR - current: {float(h['current_price_myr']):.3f} MYR ({sign}{abs(delta):.3f} MYR, {sign}{abs(pct):.2f}%)")
+    typer.echo(f"\nLogged {len(hits)} hit(s) to {ALERTS_FILE} (if marking enabled)")
 
 
 def remove_watch_entry(identifier: str) -> tuple[bool,str]:
