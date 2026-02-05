@@ -726,6 +726,7 @@ class KLSEPortfolioManager:
                 # ALERT ONLY - Do not execute trade automatically
                 stops_triggered.append({
                     'ticker': ticker,
+                    'company_name': position.get('company_name', ''),
                     'shares': shares,
                     'stop_price': current_price,
                     'cost_basis': cost_basis,
@@ -734,7 +735,7 @@ class KLSEPortfolioManager:
                 })
                 
                 # Log alert message
-                logger.warning(f"🚨 STOP LOSS ALERT: {ticker} has hit stop loss!")
+                logger.warning(f"🚨 STOP LOSS ALERT: {ticker} ({position.get('company_name','')}) has hit stop loss!")
                 logger.warning(f"   Current Price: {current_price:.3f} MYR | Stop Loss: {stop_loss:.3f} MYR")
                 logger.warning(f"   Position: {shares} shares | Potential Loss: {position_pnl:.2f} MYR")
                 logger.warning(f"   ⚠️  Manual action required - trade NOT automatically executed")
@@ -746,6 +747,7 @@ class KLSEPortfolioManager:
                 result = {
                     'date': today,
                     'ticker': ticker,
+                    'company_name': position.get('company_name',''),
                     'shares': shares,
                     'cost_basis': cost_basis,
                     'stop_loss': stop_loss,

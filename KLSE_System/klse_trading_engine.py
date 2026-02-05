@@ -15,7 +15,10 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import typer
 from typing_extensions import Annotated
-import yfinance as yf
+try:
+    import yfinance as yf
+except Exception:
+    yf = None  # yfinance optional for test environments without network/installation
 
 # Add parent directory for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -567,7 +570,8 @@ class KLSETradingEngine:
                 report.append("🚨 STOP LOSS ALERTS:")
                 report.append("")
                 for pos in alert_positions:
-                    report.append(f"⚠️  {pos['ticker']}: {pos['shares']} shares - STOP LOSS HIT")
+                    name = pos.get('company_name') or pos.get('ticker')
+                    report.append(f"⚠️  {name}: {pos['shares']} shares - STOP LOSS HIT")
                     report.append(f"   Price: {pos['current_price']:.3f} MYR (Stop: {pos['stop_loss']:.3f})")
                     report.append(f"   Value: {pos['position_value']:,.2f} MYR")
                     report.append(f"   PnL: {pos['position_pnl']:+,.2f} MYR ({pos['position_return_pct']:+.2f}%)")
@@ -628,7 +632,8 @@ def daily_processing(
             typer.echo("=" * 60)
             
             for alert in result['stops_triggered']:
-                typer.echo(f"\n⚠️  {alert['ticker']}")
+                display = alert.get('company_name') or alert.get('ticker')
+                typer.echo(f"\n⚠️  {display}")
                 typer.echo(f"   Current Price: {alert['stop_price']:.3f} MYR")
                 typer.echo(f"   Stop Loss: {alert['stop_loss']:.3f} MYR (15% below cost)")
                 typer.echo(f"   Shares: {alert['shares']}")
