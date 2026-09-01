@@ -48,6 +48,19 @@ def test_add_and_load(monkeypatch):
     assert rows[0]['notes'] == 'test'
 
 
+def test_add_uses_mapped_name_for_symbol_and_code(monkeypatch):
+    monkeypatch.setattr(r, 'get_current_price', lambda t: None)
+    for counter in ('AME', '5293'):
+        result = runner.invoke(r.app, ['watch', 'add', counter, '1.33'])
+        assert result.exit_code == 0
+        assert 'AME (5293.KL) - target: 1.330 MYR' in result.output
+
+    rows = r.load_watched_counters()
+    assert len(rows) == 1
+    assert rows[0]['ticker'] == '5293.KL'
+    assert rows[0]['display_name'] == 'AME'
+
+
 def test_list_shows_entries(monkeypatch):
     monkeypatch.setattr(r, 'get_current_price', lambda t: 0.1)
     runner.invoke(r.app, ['watch', 'add', 'JAKS', '0.11', '--notes', 'test'])

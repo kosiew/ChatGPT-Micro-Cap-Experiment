@@ -159,6 +159,12 @@ def _derive_display_name_from_database(ticker: str) -> str:
     """
     # ticker expected in yfinance format like '4723.KL' or 'GAMUDA.KL'
     prefix = ticker.split('.')[0].upper()
+
+    # Use a mapped symbol when the ticker was supplied as its numeric code.
+    for symbol, code in load_ticker_mappings().items():
+        if str(code).split('.')[0].upper() == prefix:
+            return symbol
+
     db_path = Path('KLSE_System/klse_microcap_database.csv')
     if db_path.exists():
         try:
@@ -262,6 +268,10 @@ def show_watched_section():
         current = get_current_price(ticker) if ticker else None
         if current is None or interested is None:
             target = w.get('interested_buy_price_myr') or w.get('interested_price_myr')
+            try:
+                target = f"{float(target):.3f}"
+            except (TypeError, ValueError):
+                pass
             typer.echo(f"   • {display} ({ticker}) - target: {target} MYR - current: N/A")
         else:
             delta = current - interested
