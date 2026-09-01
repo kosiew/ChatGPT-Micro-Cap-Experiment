@@ -18,8 +18,11 @@ def isolated_watched(tmp_path, monkeypatch):
     klse_dir = tmp_path / 'KLSE_System'
     klse_dir.mkdir()
     watched = klse_dir / 'klse_watched.csv'
-    # set module variable
+    mappings = tmp_path / 'ticker_mappings.json'
+    mappings.write_text('{"AXIATA": "6888"}', encoding='utf-8')
+    # set module variables
     monkeypatch.setattr(r, 'WATCHED_FILE', str(watched))
+    monkeypatch.setattr(r, 'TICKER_MAPPINGS_FILE', mappings, raising=False)
     # create a minimal microcap db to allow name resolution
     db = klse_dir / 'klse_microcap_database.csv'
     with db.open('w', newline='', encoding='utf-8') as f:
@@ -48,17 +51,33 @@ def test_add_and_load(monkeypatch):
     assert rows[0]['notes'] == 'test'
 
 
-def test_add_uses_mapped_name_for_symbol_and_code(monkeypatch):
+def test_add_discovers_and_persists_name_to_code_mapping(monkeypatch, tmp_path):
     monkeypatch.setattr(r, 'get_current_price', lambda t: None)
-    for counter in ('AME', '5293'):
+    lookups = []
+
+    def lookup(counter):
+        lookups.append(counter)
+        return 'AME', '5293'
+
+    monkeypatch.setattr(r, '_lookup_ticker_mapping', lookup, raising=False)
+
+    for counter in ('5293', 'AME'):
         result = runner.invoke(r.app, ['watch', 'add', counter, '1.33'])
         assert result.exit_code == 0
         assert 'AME (5293.KL) - target: 1.330 MYR' in result.output
 
+    assert lookups == ['5293']
+    assert r.load_ticker_mappings() == {'AXIATA': '6888', 'AME': '5293'}
     rows = r.load_watched_counters()
     assert len(rows) == 1
     assert rows[0]['ticker'] == '5293.KL'
     assert rows[0]['display_name'] == 'AME'
+
+
+def test_formatted_ticker_skips_online_lookup(monkeypatch):
+    monkeypatch.setattr(r, '_lookup_ticker_mapping', lambda counter: pytest.fail('unexpected lookup'), raising=False)
+
+    assert r._normalize_ticker('5293.KL') == '5293.KL'
 
 
 def test_list_shows_entries(monkeypatch):

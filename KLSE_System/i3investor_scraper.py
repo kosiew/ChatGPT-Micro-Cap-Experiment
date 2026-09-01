@@ -20,6 +20,31 @@ class I3InvestorScraper:
         })
         self.logger = logging.getLogger(__name__)
 
+    def resolve_ticker(self, counter: str, max_retries: int = 3) -> Optional[tuple[str, str]]:
+        """Resolve a Bursa counter symbol or numeric code to ``(symbol, code)``."""
+        query = counter.replace('.KL', '').upper()
+        url = f"{self.base_url}{query}"
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self.session.get(url, timeout=10)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.content, 'html.parser')
+                subtitle = soup.find('p', class_='subtitle')
+                text = subtitle.get_text(' ', strip=True) if subtitle else soup.get_text(' ', strip=True)
+                match = re.search(r'([A-Z0-9_-]+)\s*\((\d+)\)', text.upper())
+                if match:
+                    symbol, code = match.groups()
+                    self.logger.info(f"✅ Resolved ticker: {query} -> {symbol} ({code})")
+                    return symbol, code
+            except requests.RequestException as error:
+                self.logger.warning(f"i3investor ticker lookup failed for {query}: {error}")
+
+            if attempt < max_retries:
+                time.sleep(1)
+
+        return None
+
     def get_stock_price(self, ticker: str, max_retries: int = 3) -> Optional[float]:
         """
         Get stock price from i3investor website

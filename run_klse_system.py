@@ -77,6 +77,7 @@ def show_generated_files():
 
 # --- Watched counters helpers ---
 WATCHED_FILE = "KLSE_System/klse_watched.csv"
+TICKER_MAPPINGS_FILE = Path("ticker_mappings.json")
 
 
 def ensure_watched_file():
@@ -92,45 +93,66 @@ def ensure_watched_file():
 
 
 def load_ticker_mappings() -> dict:
-    """Load mappings from ticker_mappings.json if present"""
+    """Load cached counter-symbol-to-code mappings."""
     try:
-        p = Path('ticker_mappings.json')
-        if p.exists():
-            with open(p, encoding='utf-8') as f:
-                return {k.upper(): v for k, v in __import__('json').load(f).items()}
-    except Exception:
+        if TICKER_MAPPINGS_FILE.exists():
+            with open(TICKER_MAPPINGS_FILE, encoding='utf-8') as f:
+                return {k.upper(): str(v) for k, v in __import__('json').load(f).items()}
+    except (OSError, ValueError):
         pass
     return {}
+
+
+def _save_ticker_mapping(symbol: str, code: str) -> None:
+    """Cache a counter symbol resolved from i3investor for later offline use."""
+    mappings = load_ticker_mappings()
+    mappings[symbol.upper()] = str(code)
+    try:
+        with open(TICKER_MAPPINGS_FILE, 'w', encoding='utf-8') as f:
+            __import__('json').dump(mappings, f, indent=2)
+            f.write('\n')
+    except OSError:
+        pass
+
+
+def _lookup_ticker_mapping(counter: str) -> Optional[tuple[str, str]]:
+    """Resolve a Bursa counter symbol or code through i3investor."""
+    try:
+        from KLSE_System.i3investor_scraper import I3InvestorScraper
+        return I3InvestorScraper().resolve_ticker(counter)
+    except (ImportError, OSError):
+        return None
 
 
 def _normalize_ticker(ticker: str) -> str:
     """Normalize user input into a yfinance-compatible ticker like '4723.KL' or 'GAMUDA.KL'.
     Attempts multiple resolution strategies:
-     - numeric code -> code.KL
-     - ticker_mappings.json -> code
+     - cached ticker_mappings.json symbol or code
      - exact .KL provided -> use upper
      - match ticker or company name in klse_microcap_database.csv
+     - i3investor lookup, cached for future use
      - fallback to upper + .KL
     """
     t = ticker.strip()
     mappings = load_ticker_mappings()
     up = t.upper()
 
-    # numeric
-    if t.isdigit():
-        return f"{t}.KL"
-
-    # mapping like AXIATA -> 6888
+    # Mapping like AXIATA -> 6888.
     if up in mappings:
         return f"{mappings[up]}.KL"
 
-    # if already formatted
-    if up.endswith('.KL'):
-        return up
+    # Preserve an already formatted ticker unless its numeric code can be resolved below.
+    formatted_ticker = up if up.endswith('.KL') else None
+    prefix = up.removesuffix('.KL')
+    if formatted_ticker:
+        return formatted_ticker
+
+    # A cached symbol mapping also resolves its numeric code without another lookup.
+    if prefix.isdigit() and prefix in {code.split('.')[0] for code in mappings.values()}:
+        return f"{prefix}.KL"
 
     # try to find in microcap database by exact ticker or by company name containing the token
     db_path = Path('KLSE_System/klse_microcap_database.csv')
-    prefix = up
     if db_path.exists():
         try:
             with open(db_path, newline='', encoding='utf-8') as f:
@@ -149,8 +171,15 @@ def _normalize_ticker(ticker: str) -> str:
         except Exception:
             pass
 
+    # Unknown symbols and numeric codes are resolved online once, then cached.
+    resolved = _lookup_ticker_mapping(prefix)
+    if resolved:
+        symbol, code = resolved
+        _save_ticker_mapping(symbol, code)
+        return f"{code}.KL"
+
     # fallback
-    return up + '.KL'
+    return prefix + '.KL'
 
 
 def _derive_display_name_from_database(ticker: str) -> str:
