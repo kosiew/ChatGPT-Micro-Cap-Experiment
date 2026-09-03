@@ -77,6 +77,7 @@ def show_generated_files():
 
 # --- Watched counters helpers ---
 WATCHED_FILE = "KLSE_System/klse_watched.csv"
+PORTFOLIO_FILE = "KLSE_System/klse_portfolio.csv"
 TICKER_MAPPINGS_FILE = Path("ticker_mappings.json")
 
 
@@ -702,6 +703,93 @@ def watch_edit(
     else:
         typer.echo(f"⚠️  {msg}")
     show_watched_list()
+
+
+def load_portfolio_positions() -> list:
+    """Read current holdings from the portfolio CSV (empty list if missing)."""
+    path = Path(PORTFOLIO_FILE)
+    if not path.exists():
+        return []
+    with open(path, newline='', encoding='utf-8') as f:
+        return list(csv.DictReader(f))
+
+
+def _position_counter_name(row: dict) -> str:
+    """Short counter label for a holding, e.g. GAMUDA."""
+    ticker = row.get('ticker', '')
+    display = _derive_display_name_from_database(ticker) if ticker else ''
+    # _derive_display_name_from_database falls back to the numeric code; prefer the
+    # portfolio's own company name in that case.
+    if display and not display.isdigit():
+        return display
+    company = (row.get('company_name') or '').strip()
+    if company:
+        return ''.join(ch for ch in company.split()[0].upper() if ch.isalnum())
+    return display or ticker
+
+
+def _to_float(value) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def show_positions(live: bool = True):
+    """Print holdings with quantity, cost, current price and % gain."""
+    rows = load_portfolio_positions()
+    if not rows:
+        typer.echo(f"\n📁 Portfolio: no positions found in {PORTFOLIO_FILE}")
+        return
+
+    typer.echo("\n📈 Portfolio Positions:")
+    header = f"{'COUNTER':<12} {'CODE':<9} {'QTY':>8} {'BOUGHT':>10} {'CURRENT':>10} {'VALUE':>13} {'GAIN%':>9}"
+    typer.echo(header)
+    typer.echo("-" * len(header))
+
+    total_cost = 0.0
+    total_value = 0.0
+    for r in rows:
+        ticker = r.get('ticker', '')
+        code = ticker.split('.')[0]
+        counter = _position_counter_name(r)
+        shares = _to_float(r.get('shares')) or 0.0
+        cost = _to_float(r.get('avg_cost_myr'))
+        current = get_current_price(ticker) if (live and ticker) else None
+        if current is None:
+            current = _to_float(r.get('current_price_myr'))
+
+        qty_txt = f"{shares:,.0f}"
+        cost_txt = f"{cost:.3f}" if cost is not None else "N/A"
+        cur_txt = f"{current:.3f}" if current is not None else "N/A"
+        if current is not None:
+            value = shares * current
+            value_txt = f"{value:,.2f}"
+            total_value += value
+        else:
+            value_txt = "N/A"
+        if cost is not None and current is not None and cost != 0:
+            pct = (current - cost) / cost * 100
+            gain_txt = f"{pct:+.2f}%"
+        else:
+            gain_txt = "N/A"
+        if cost is not None:
+            total_cost += shares * cost
+
+        typer.echo(f"{counter:<12} {code:<9} {qty_txt:>8} {cost_txt:>10} {cur_txt:>10} {value_txt:>13} {gain_txt:>9}")
+
+    typer.echo("-" * len(header))
+    total_pct = (total_value - total_cost) / total_cost * 100 if total_cost else 0.0
+    typer.echo(f"{'TOTAL':<12} {'':<9} {'':>8} {total_cost:>10,.2f} {'':>10} {total_value:>13,.2f} {total_pct:>+8.2f}%")
+    typer.echo(f"\nPositions: {len(rows)} | Cost: {total_cost:,.2f} MYR | Value: {total_value:,.2f} MYR | P/L: {total_value - total_cost:+,.2f} MYR")
+
+
+@app.command("positions")
+def positions(
+    live: Annotated[bool, typer.Option("--live/--cached", help="Fetch live prices via yfinance (default) or use prices stored in the portfolio CSV")] = True
+):
+    """Show portfolio holdings: counter (code), quantity, price bought, current price and % gain"""
+    show_positions(live=live)
 
 
 # Backward-compatible top-level command (keeps `run_klse_system.py watch GAMUDA 0.11` working)
