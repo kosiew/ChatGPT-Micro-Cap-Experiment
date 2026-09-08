@@ -624,7 +624,13 @@ def daily_processing(
         
         summary = result['summary']
         typer.echo(f"📊 Total Equity: {summary['total_equity']:,.2f} MYR")
-        typer.echo(f"📈 Return: {summary['total_return_pct']:+.2f}%")
+        injected = summary.get('capital_injected', 0.0)
+        if injected:
+            typer.echo(f"💰 Capital In: {summary['contributed_capital']:,.2f} MYR "
+                       f"({summary['starting_capital']:,.2f} starting "
+                       f"+ {injected:,.2f} injected)")
+        typer.echo(f"📈 Return: {summary['total_return_pct']:+.2f}% "
+                   f"(vs capital paid in)")
         typer.echo(f"🏢 Positions: {summary['positions']}")
         
         # Display stop loss alerts prominently

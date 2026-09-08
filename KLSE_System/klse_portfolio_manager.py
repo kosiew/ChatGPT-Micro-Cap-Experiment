@@ -38,7 +38,14 @@ class KLSEPortfolioManager:
         self.current_cash_myr = starting_cash_myr
         self.portfolio_file = "KLSE_System/klse_portfolio.csv"
         self.trade_log_file = "KLSE_System/klse_trades.csv"
+        self.capital_flow_file = "KLSE_System/klse_capital_flows.csv"
         self.config_file = "KLSE_System/klse_config.json"
+
+        # Capital paid in beyond the starting cash. Buys that exceed cash on
+        # hand top the account up, and that top-up is contributed capital, not
+        # profit - returns must be measured against it or every injection
+        # inflates the reported return.
+        self.injected_capital_myr = 0.0
         
         # Initialize data fetcher
         if ENHANCED_DATA_AVAILABLE:
@@ -84,6 +91,7 @@ class KLSEPortfolioManager:
                 # Load starting cash from config if available (for proper return calculation)
                 if 'starting_cash_myr' in config:
                     self.starting_cash_myr = config['starting_cash_myr']
+                self.injected_capital_myr = config.get('injected_capital_myr', 0.0)
                 # Load other config settings as needed
     
     def _validate_portfolio_data(self, portfolio: pd.DataFrame) -> pd.DataFrame:
@@ -362,6 +370,7 @@ class KLSEPortfolioManager:
             
             config['current_cash_myr'] = self.current_cash_myr
             config['starting_cash_myr'] = self.starting_cash_myr
+            config['injected_capital_myr'] = round(self.injected_capital_myr, 2)
             
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=2)
@@ -378,6 +387,8 @@ class KLSEPortfolioManager:
                 with open(self.config_file, 'r') as f:
                     config = json.load(f)
                 
+                self.injected_capital_myr = config.get('injected_capital_myr',
+                                                       self.injected_capital_myr)
                 if 'current_cash_myr' in config:
                     self.current_cash_myr = config['current_cash_myr']
                     logger.info(f"Loaded cash balance: {self.current_cash_myr:.2f} MYR from config")
@@ -603,11 +614,10 @@ class KLSEPortfolioManager:
         
         # Auto-inject cash if needed for target position (add funds, don't overwrite)
         if target_value > self.current_cash_myr:
-            cash_needed = target_value - self.current_cash_myr
-            logger.info(f"💰 Auto-injecting {cash_needed:.2f} MYR cash for {target_weight_pct}% position")
-            prev_cash = self.current_cash_myr
-            self.current_cash_myr += cash_needed
-            logger.info(f"   Previous cash: {prev_cash:.2f} MYR -> New cash: {self.current_cash_myr:.2f} MYR")
+            self._record_capital_injection(
+                target_value - self.current_cash_myr,
+                f"{target_weight_pct}% target position in {full_ticker}",
+                full_ticker)
         
         # Calculate board lots
         shares, cost = self._calculate_board_lots(target_value, current_price)
@@ -700,13 +710,12 @@ class KLSEPortfolioManager:
         
         cost = current_price * shares
         
-        # Auto-inject cash if needed (simulates adding money to account)
+        # Auto-inject cash if the buy exceeds cash on hand
         if cost > self.current_cash_myr:
-            cash_needed = cost - self.current_cash_myr
-            logger.info(f"💰 Auto-injecting {cash_needed:.2f} MYR cash for purchase")
-            prev_cash = self.current_cash_myr
-            self.current_cash_myr += cash_needed
-            logger.info(f"   Previous cash: {prev_cash:.2f} MYR -> New cash: {self.current_cash_myr:.2f} MYR")
+            self._record_capital_injection(
+                cost - self.current_cash_myr,
+                f"buy {shares:,} {full_ticker} @ {current_price:.3f}",
+                full_ticker)
         
         # Trailing stop: the entry price is the first high-water mark
         stop_loss_price = self._trailing_stop_price(current_price, stop_loss_pct)
@@ -903,6 +912,51 @@ class KLSEPortfolioManager:
         
         return total_stock_value + self.current_cash_myr
 
+    @property
+    def total_contributed_capital_myr(self) -> float:
+        """Cash actually paid in: the starting balance plus every injection.
+
+        This, not starting_cash_myr, is the denominator for returns. Funding a
+        buy out of fresh capital raises equity without earning anything, so
+        measuring against the starting balance alone books the injection as
+        profit.
+        """
+        return self.starting_cash_myr + self.injected_capital_myr
+
+    def _record_capital_injection(self, amount: float, reason: str, ticker: str = "") -> None:
+        """Add fresh capital to the account and write it to the capital ledger."""
+        if amount <= 0:
+            return
+
+        prev_cash = self.current_cash_myr
+        self.current_cash_myr += amount
+        self.injected_capital_myr += amount
+
+        logger.info(f"💰 Capital injection: {amount:,.2f} MYR ({reason})")
+        logger.info(f"   Cash: {prev_cash:,.2f} -> {self.current_cash_myr:,.2f} MYR | "
+                    f"Total contributed capital: {self.total_contributed_capital_myr:,.2f} MYR")
+
+        now = datetime.now()
+        entry = {
+            'timestamp': now.isoformat(),
+            'date': now.strftime('%Y-%m-%d'),
+            'type': 'INJECTION',
+            'ticker': ticker,
+            'amount_myr': round(amount, 2),
+            'reason': reason,
+            'cash_after_injection_myr': round(self.current_cash_myr, 2),
+            'total_injected_myr': round(self.injected_capital_myr, 2),
+            'contributed_capital_myr': round(self.total_contributed_capital_myr, 2),
+        }
+        try:
+            frame = pd.DataFrame([entry])
+            header = not os.path.exists(self.capital_flow_file)
+            frame.to_csv(self.capital_flow_file, mode='a', header=header, index=False)
+        except Exception as exc:
+            logger.error(f"Failed to write capital flow ledger: {exc}")
+
+        self._save_cash_balance()
+
     def _safe_return_pct(self, numerator: float, denominator: float) -> float:
         """Calculate percentage return safely, avoid division by zero.
 
@@ -1053,7 +1107,8 @@ class KLSEPortfolioManager:
 
         # Calculate total portfolio metrics
         total_equity = total_value + self.current_cash_myr
-        total_return_pct = self._safe_return_pct((total_equity - self.starting_cash_myr), self.starting_cash_myr)
+        contributed = self.total_contributed_capital_myr
+        total_return_pct = self._safe_return_pct((total_equity - contributed), contributed)
 
         summary = {
             'date': today,
@@ -1062,6 +1117,9 @@ class KLSEPortfolioManager:
             'total_equity': total_equity,
             'total_pnl': total_pnl,
             'total_return_pct': total_return_pct,
+            'starting_capital': self.starting_cash_myr,
+            'capital_injected': self.injected_capital_myr,
+            'contributed_capital': contributed,
             'positions': len(self.portfolio),
             'stops_triggered': len(stops_triggered),
             'stop_details': stops_triggered,
@@ -1137,7 +1195,8 @@ class KLSEPortfolioManager:
                 logger.warning(f"❌ Failed to get price data for {position['ticker']} ({position['company_name']})")
 
         total_equity = total_value + self.current_cash_myr
-        total_return_pct = self._safe_return_pct((total_equity - self.starting_cash_myr), self.starting_cash_myr)
+        contributed = self.total_contributed_capital_myr
+        total_return_pct = self._safe_return_pct((total_equity - contributed), contributed)
 
         return {
             'total_positions': len(positions),
@@ -1145,6 +1204,9 @@ class KLSEPortfolioManager:
             'cash_balance': self.current_cash_myr,
             'total_equity': total_equity,
             'total_return_pct': total_return_pct,
+            'starting_capital': self.starting_cash_myr,
+            'capital_injected': self.injected_capital_myr,
+            'contributed_capital': contributed,
             'positions': positions,
             'failed_tickers': failed_tickers,
             'market_status': self.get_market_status()
