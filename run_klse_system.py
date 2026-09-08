@@ -8,6 +8,7 @@ import os
 import sys
 import subprocess
 import csv
+import time
 from datetime import datetime
 from typing import Annotated, Optional
 from pathlib import Path
@@ -77,6 +78,12 @@ def show_generated_files():
 
 # --- Watched counters helpers ---
 WATCHED_FILE = "KLSE_System/klse_watched.csv"
+# last_price_myr/last_price_at cache the most recent successful quote so the
+# watchlist can fall back to it when a live fetch fails, the way `positions`
+# falls back to current_price_myr in klse_portfolio.csv.
+WATCHED_FIELDNAMES = ["date_added", "ticker", "display_name",
+                      "interested_buy_price_myr", "notes",
+                      "last_price_myr", "last_price_at"]
 PORTFOLIO_FILE = "KLSE_System/klse_portfolio.csv"
 TICKER_MAPPINGS_FILE = Path("ticker_mappings.json")
 
@@ -90,7 +97,7 @@ def ensure_watched_file():
         with open(WATCHED_FILE, "w", newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             # Add display_name column to store friendly label like 'GAMUDA'
-            writer.writerow(["date_added","ticker","display_name","interested_buy_price_myr","notes"])
+            writer.writerow(WATCHED_FIELDNAMES)
 
 
 def load_ticker_mappings() -> dict:
@@ -246,7 +253,7 @@ def add_watch_entry(ticker: str, interested_buy_price: float, notes: str = ""):
         rows.append({"date_added": now, "ticker": ticker_norm, "display_name": display_name, "interested_buy_price_myr": f"{interested_buy_price}", "notes": notes})
     # Write back
     with open(WATCHED_FILE, "w", newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_buy_price_myr","notes"])
+        writer = csv.DictWriter(f, fieldnames=WATCHED_FIELDNAMES, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -259,26 +266,101 @@ def load_watched_counters():
         for r in rows:
             if 'display_name' not in r:
                 r['display_name'] = ''
+            for key in ('last_price_myr', 'last_price_at'):
+                if r.get(key) is None:
+                    r[key] = ''
         return rows
 
 
-def get_current_price(ticker: str):
-    """Return latest close price using yfinance or None on failure"""
+def _log_price_failure(ticker: str, error) -> None:
+    """Surface why a lookup failed instead of silently returning None."""
+    typer.echo(f"\u26a0\ufe0f  Price lookup failed for {ticker}: {error}", err=True)
+
+
+def get_current_price(ticker: str, retries: int = 3, backoff: float = 1.0):
+    """Return latest close price using yfinance, or None on failure.
+
+    Yahoo throttles per IP, so the `full` run - which fetches dozens of tickers
+    through its subprocesses before reaching the watchlist - is far likelier to
+    be rate-limited here than a standalone command. Retry with backoff, and try
+    the quote endpoint separately from history(): the two calls fail
+    independently, so the quote must not sit behind history()'s exception.
+    """
     try:
         import yfinance as yf_local
-    except Exception:
+    except Exception as exc:
+        _log_price_failure(ticker, f"yfinance unavailable: {exc}")
         return None
-    try:
-        tk = yf_local.Ticker(ticker)
-        hist = tk.history(period='1d')
-        if hist is not None and not hist.empty:
-            return float(hist['Close'].iloc[-1])
-        # fallback
-        info = tk.info if hasattr(tk, 'info') else {}
-        price = info.get('regularMarketPrice') if info else None
-        return float(price) if price is not None else None
-    except Exception:
-        return None
+
+    last_error = "no data"
+    for attempt in range(retries):
+        tk = None
+        try:
+            tk = yf_local.Ticker(ticker)
+            hist = tk.history(period='1d')
+            if hist is not None and not hist.empty:
+                return float(hist['Close'].iloc[-1])
+            last_error = "empty history"
+        except Exception as exc:
+            last_error = exc
+        if tk is not None:
+            try:
+                info = tk.info or {}
+                price = info.get('regularMarketPrice') or info.get('previousClose')
+                if price is not None:
+                    return float(price)
+            except Exception as exc:
+                last_error = exc
+        if attempt < retries - 1:
+            time.sleep(backoff * (2 ** attempt))
+
+    _log_price_failure(ticker, last_error)
+    return None
+
+
+def write_watched_counters(rows) -> None:
+    """Rewrite WATCHED_FILE, upgrading legacy rows to the current columns."""
+    ensure_watched_file()
+    with open(WATCHED_FILE, "w", newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=WATCHED_FIELDNAMES, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def record_watched_prices(prices: dict) -> None:
+    """Cache freshly fetched prices in WATCHED_FILE for later fallback."""
+    fresh = {t: p for t, p in (prices or {}).items() if t and p is not None}
+    if not fresh:
+        return
+    rows = load_watched_counters()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    changed = False
+    for r in rows:
+        price = fresh.get(r.get('ticker'))
+        if price is None:
+            continue
+        r['last_price_myr'] = f"{price:.3f}"
+        r['last_price_at'] = now
+        changed = True
+    if changed:
+        write_watched_counters(rows)
+
+
+def resolve_watched_price(row) -> tuple:
+    """Return (price, cached_at) for a watch row.
+
+    A live quote wins and reports cached_at=None. Otherwise fall back to the
+    last price cached in WATCHED_FILE so a transient Yahoo failure degrades to
+    a stale-but-labelled number instead of N/A.
+    """
+    ticker = row.get('ticker')
+    price = get_current_price(ticker) if ticker else None
+    if price is not None:
+        return price, None
+    cached = _to_float(row.get('last_price_myr'))
+    if cached is not None:
+        return cached, row.get('last_price_at') or 'unknown'
+    return None, None
 
 
 def show_watched_section():
@@ -287,6 +369,7 @@ def show_watched_section():
         typer.echo("\n🔭 Watched Counters: None")
         return
     typer.echo("\n🔭 Watched Counters:")
+    fetched = {}
     for w in watched:
         ticker = w.get("ticker")
         display = w.get("display_name") or (ticker.split('.')[0] if ticker else "")
@@ -295,7 +378,9 @@ def show_watched_section():
             interested = float(w.get("interested_buy_price_myr", w.get("interested_price_myr", '')))
         except Exception:
             interested = None
-        current = get_current_price(ticker) if ticker else None
+        current, cached_at = resolve_watched_price(w)
+        if current is not None and cached_at is None:
+            fetched[ticker] = current
         if current is None or interested is None:
             target = w.get('interested_buy_price_myr') or w.get('interested_price_myr')
             try:
@@ -307,7 +392,9 @@ def show_watched_section():
             delta = current - interested
             pct = (delta / interested) * 100 if interested != 0 else 0
             sign = "+" if delta >= 0 else "-"
-            typer.echo(f"   • {display} ({ticker}) - target: {interested:.3f} MYR - current: {current:.3f} MYR ({sign}{abs(delta):.3f} MYR, {sign}{abs(pct):.2f}%)")
+            stale = f" [cached {cached_at}]" if cached_at else ""
+            typer.echo(f"   • {display} ({ticker}) - target: {interested:.3f} MYR - current: {current:.3f} MYR ({sign}{abs(delta):.3f} MYR, {sign}{abs(pct):.2f}%){stale}")
+    record_watched_prices(fetched)
 
 # --- End watched helpers ---
 
@@ -337,6 +424,7 @@ def check_watched_targets(notify: bool = False, mark: bool = True) -> list:
     If mark is True append alerts to ALERTS_FILE. If notify True, send macOS notification (if supported).
     """
     hits = []
+    fetched = {}
     watched = load_watched_counters()
     for w in watched:
         ticker = w.get('ticker')
@@ -346,9 +434,11 @@ def check_watched_targets(notify: bool = False, mark: bool = True) -> list:
             interested = float(w.get('interested_buy_price_myr', w.get('interested_price_myr','')))
         except Exception:
             continue
+        # Alerts stay live-only: a stale cached price must never fire a target hit.
         current = get_current_price(ticker) if ticker else None
         if current is None:
             continue
+        fetched[ticker] = current
         # consider hit when current <= interested (target buy)
         if current <= interested:
             delta = current - interested
@@ -375,6 +465,7 @@ def check_watched_targets(notify: bool = False, mark: bool = True) -> list:
                         subprocess.run(["osascript", "-e", f'display notification "{msg}" with title "KLSE Watch Alert"'], check=False)
                     except Exception:
                         pass
+    record_watched_prices(fetched)
     # write to alerts file
     if mark and hits:
         ensure_alerts_file()
@@ -549,6 +640,7 @@ def show_watched_list():
         typer.echo("\n🔭 Watched Counters: None")
         return
     typer.echo("\n🔭 Watched Counters:")
+    fetched = {}
     for i, r in enumerate(rows, start=1):
         ticker = r.get('ticker')
         display = r.get('display_name') or (ticker.split('.')[0] if ticker else '')
@@ -557,7 +649,9 @@ def show_watched_list():
             interested = float(r.get('interested_buy_price_myr', r.get('interested_price_myr','')))
         except Exception:
             interested = None
-        current = get_current_price(ticker) if ticker else None
+        current, cached_at = resolve_watched_price(r)
+        if current is not None and cached_at is None:
+            fetched[ticker] = current
         if current is None or interested is None:
             target = r.get('interested_buy_price_myr') or r.get('interested_price_myr')
             typer.echo(f" {i:>2}) {display} ({ticker}) - target: {target} MYR - current: N/A - {notes}")
@@ -565,7 +659,9 @@ def show_watched_list():
             delta = current - interested
             pct = (delta / interested) * 100 if interested != 0 else 0
             sign = "+" if delta >= 0 else "-"
-            typer.echo(f" {i:>2}) {display} ({ticker}) - target: {interested:.3f} MYR - current: {current:.3f} MYR ({sign}{abs(delta):.3f} MYR, {sign}{abs(pct):.2f}%) - {notes}")
+            stale = f" [cached {cached_at}]" if cached_at else ""
+            typer.echo(f" {i:>2}) {display} ({ticker}) - target: {interested:.3f} MYR - current: {current:.3f} MYR ({sign}{abs(delta):.3f} MYR, {sign}{abs(pct):.2f}%){stale} - {notes}")
+    record_watched_prices(fetched)
 
 
 @watch_app.command("list")
@@ -607,7 +703,7 @@ def remove_watch_entry(identifier: str) -> tuple[bool,str]:
             removed = rows.pop(idx-1)
             # write back
             with open(WATCHED_FILE, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_buy_price_myr","notes"])
+                writer = csv.DictWriter(f, fieldnames=WATCHED_FIELDNAMES, extrasaction="ignore")
                 writer.writeheader()
                 writer.writerows(rows)
             return True, f"Removed {removed.get('display_name') or removed.get('ticker')}"
@@ -624,7 +720,7 @@ def remove_watch_entry(identifier: str) -> tuple[bool,str]:
         if ident == ticker or ident == tprefix or ident == display or display.startswith(ident) or tprefix.startswith(ident):
             rows.remove(r)
             with open(WATCHED_FILE, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_buy_price_myr","notes"])
+                writer = csv.DictWriter(f, fieldnames=WATCHED_FIELDNAMES, extrasaction="ignore")
                 writer.writeheader()
                 writer.writerows(rows)
             return True, f"Removed {r.get('display_name') or r.get('ticker')}"
@@ -649,7 +745,7 @@ def edit_watch_entry(identifier: str, new_price: float | None = None, new_notes:
                 r['notes'] = new_notes
             r['date_added'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with open(WATCHED_FILE, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_buy_price_myr","notes"])
+                writer = csv.DictWriter(f, fieldnames=WATCHED_FIELDNAMES, extrasaction="ignore")
                 writer.writeheader()
                 writer.writerows(rows)
             return True, f"Updated {r.get('display_name') or r.get('ticker')}"
@@ -670,7 +766,7 @@ def edit_watch_entry(identifier: str, new_price: float | None = None, new_notes:
                 r['notes'] = new_notes
             r['date_added'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with open(WATCHED_FILE, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=["date_added","ticker","display_name","interested_buy_price_myr","notes"])
+                writer = csv.DictWriter(f, fieldnames=WATCHED_FIELDNAMES, extrasaction="ignore")
                 writer.writeheader()
                 writer.writerows(rows)
             return True, f"Updated {r.get('display_name') or r.get('ticker')}"
