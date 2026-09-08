@@ -9,6 +9,7 @@ import sys
 import subprocess
 import csv
 import time
+import logging
 from datetime import datetime
 from typing import Annotated, Optional
 from pathlib import Path
@@ -277,13 +278,74 @@ def _log_price_failure(ticker: str, error) -> None:
     typer.echo(f"\u26a0\ufe0f  Price lookup failed for {ticker}: {error}", err=True)
 
 
-def get_current_price(ticker: str, retries: int = 3, backoff: float = 1.0):
-    """Return latest close price using yfinance, or None on failure.
+_DATA_FETCHER = None
+_DATA_FETCHER_RESOLVED = False
 
-    Yahoo throttles per IP, so the `full` run - which fetches dozens of tickers
-    through its subprocesses before reaching the watchlist - is far likelier to
-    be rate-limited here than a standalone command. Retry with backoff, and try
-    the quote endpoint separately from history(): the two calls fail
+
+def _get_data_fetcher():
+    """Lazily build the shared KLSEDataFetcher, or None if it is unavailable.
+
+    Imported lazily on purpose: redundant_data_fetcher pulls in pandas, bs4 and
+    rich, which we do not want on `--help`, and it calls logging.basicConfig at
+    import time, which would reconfigure this CLI's root logger and narrate
+    every fetch at INFO level.
+    """
+    global _DATA_FETCHER, _DATA_FETCHER_RESOLVED
+    if _DATA_FETCHER_RESOLVED:
+        return _DATA_FETCHER
+    _DATA_FETCHER_RESOLVED = True
+
+    root = logging.getLogger()
+    prev_level, prev_handlers = root.level, list(root.handlers)
+    try:
+        from redundant_data_fetcher import KLSEDataFetcher
+        _DATA_FETCHER = KLSEDataFetcher(
+            alpha_vantage_key=os.environ.get('ALPHA_VANTAGE_KEY') or None
+        )
+        # Keep the per-source failures (warning/error) but drop the per-attempt
+        # INFO chatter, which would bury the watchlist output.
+        logging.getLogger('redundant_data_fetcher').setLevel(logging.WARNING)
+    except Exception as exc:
+        typer.echo(f"ℹ️  KLSEDataFetcher unavailable ({exc}); "
+                   f"falling back to yfinance only", err=True)
+        _DATA_FETCHER = None
+    finally:
+        # Undo any root-logger reconfiguration the import performed.
+        root.handlers[:] = prev_handlers
+        root.setLevel(prev_level)
+
+    return _DATA_FETCHER
+
+
+def get_current_price(ticker: str, retries: int = 3, backoff: float = 1.0):
+    """Return the latest price for a ticker, or None if every source fails.
+
+    Prefers KLSEDataFetcher, which falls back across yfinance -> Yahoo's chart
+    API -> i3investor. That redundancy is the point: `full` fetches dozens of
+    tickers through its subprocesses before reaching the watchlist, and Yahoo
+    throttles per IP, so the non-yfinance sources still answer when a throttle
+    blanks yfinance. Direct yfinance remains the last resort for environments
+    where the fetcher's dependencies are missing.
+    """
+    fetcher = _get_data_fetcher()
+    if fetcher is not None:
+        try:
+            # retries=1 per source: the fetcher sleeps 1s between attempts and
+            # tries three sources, so a wider retry budget stalls the listing.
+            data = fetcher.get_stock_price(ticker, retries=1)
+            price = data.get('price') if data else None
+            if price is not None:
+                return float(price)
+        except Exception as exc:
+            _log_price_failure(ticker, f"KLSEDataFetcher: {exc}")
+
+    return _get_price_via_yfinance(ticker, retries=retries, backoff=backoff)
+
+
+def _get_price_via_yfinance(ticker: str, retries: int = 3, backoff: float = 1.0):
+    """Direct yfinance lookup, retried with backoff.
+
+    Tries the quote endpoint separately from history(): the two calls fail
     independently, so the quote must not sit behind history()'s exception.
     """
     try:
