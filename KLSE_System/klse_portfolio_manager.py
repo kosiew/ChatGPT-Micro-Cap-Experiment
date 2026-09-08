@@ -612,19 +612,23 @@ class KLSEPortfolioManager:
         portfolio_value = self._calculate_portfolio_value()
         target_value = portfolio_value * (target_weight_pct / 100)
         
-        # Auto-inject cash if needed for target position (add funds, don't overwrite)
-        if target_value > self.current_cash_myr:
-            self._record_capital_injection(
-                target_value - self.current_cash_myr,
-                f"{target_weight_pct}% target position in {full_ticker}",
-                full_ticker)
-        
         # Calculate board lots
         shares, cost = self._calculate_board_lots(target_value, current_price)
         
         if shares == 0:
             logger.error(f"Insufficient cash for even 1 board lot of {full_ticker}")
             return False
+        
+        # Top up only once the buy is certain to go through, and only by what
+        # the rounded purchase actually costs. Injecting against target_value
+        # beforehand paid in up to a board lot more than was ever spent, and
+        # left a phantom injection behind whenever the buy bailed out below.
+        if cost > self.current_cash_myr:
+            self._record_capital_injection(
+                cost - self.current_cash_myr,
+                f"buy {shares:,} {full_ticker} @ {current_price:.3f} "
+                f"({target_weight_pct}% target position)",
+                full_ticker)
         
         # Trailing stop: the entry price is the first high-water mark
         stop_loss_price = self._trailing_stop_price(current_price, stop_loss_pct)
@@ -710,13 +714,6 @@ class KLSEPortfolioManager:
         
         cost = current_price * shares
         
-        # Auto-inject cash if the buy exceeds cash on hand
-        if cost > self.current_cash_myr:
-            self._record_capital_injection(
-                cost - self.current_cash_myr,
-                f"buy {shares:,} {full_ticker} @ {current_price:.3f}",
-                full_ticker)
-        
         # Trailing stop: the entry price is the first high-water mark
         stop_loss_price = self._trailing_stop_price(current_price, stop_loss_pct)
         
@@ -728,6 +725,15 @@ class KLSEPortfolioManager:
         if stop_loss_price >= current_price:
             logger.error(f"Stop loss {stop_loss_price:.3f} is not below entry price {current_price:.3f}")
             return {'success': False, 'error': 'Stop loss must be below the entry price'}
+        
+        # Top up only what the buy is short of, and only after every check that
+        # can still abort it - otherwise a rejected buy leaves capital recorded
+        # as paid in against a position that was never opened.
+        if cost > self.current_cash_myr:
+            self._record_capital_injection(
+                cost - self.current_cash_myr,
+                f"buy {shares:,} {full_ticker} @ {current_price:.3f}",
+                full_ticker)
         
         # Fold into the existing holding if we already own this counter
         if not self._merge_into_existing_position(full_ticker, shares, current_price, stop_loss_pct):
