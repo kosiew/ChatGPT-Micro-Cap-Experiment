@@ -735,9 +735,39 @@ def _to_float(value) -> Optional[float]:
         return None
 
 
+def _aggregate_positions(rows: list) -> list:
+    """Collapse repeated rows for the same ticker into one weighted-average holding.
+
+    Buys now merge into the existing position, but legacy portfolio files may
+    still hold a separate row per purchase; showing them as one line keeps the
+    reported cost basis honest.
+    """
+    merged: dict = {}
+    order = []
+    for i, r in enumerate(rows):
+        key = r.get('ticker') or f'__row{i}'
+        if key not in merged:
+            merged[key] = dict(r)
+            order.append(key)
+            continue
+
+        base = merged[key]
+        base_shares = _to_float(base.get('shares')) or 0.0
+        new_shares = _to_float(r.get('shares')) or 0.0
+        base_cost = _to_float(base.get('avg_cost_myr'))
+        new_cost = _to_float(r.get('avg_cost_myr'))
+        total_shares = base_shares + new_shares
+
+        base['shares'] = total_shares
+        if total_shares and base_cost is not None and new_cost is not None:
+            base['avg_cost_myr'] = (base_shares * base_cost + new_shares * new_cost) / total_shares
+
+    return [merged[k] for k in order]
+
+
 def show_positions(live: bool = True):
     """Print holdings with quantity, cost, current price and % gain."""
-    rows = load_portfolio_positions()
+    rows = _aggregate_positions(load_portfolio_positions())
     if not rows:
         typer.echo(f"\n📁 Portfolio: no positions found in {PORTFOLIO_FILE}")
         return

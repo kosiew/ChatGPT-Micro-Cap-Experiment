@@ -362,6 +362,50 @@ class KLSEPortfolioManager:
         
         return next_open.strftime("%Y-%m-%d %H:%M:%S %Z")
     
+    def _merge_into_existing_position(self, full_ticker: str, shares: int, price: float,
+                                      stop_loss_pct: float) -> bool:
+        """Fold a new buy into an existing holding of the same ticker.
+
+        Recomputes the weighted average cost (and the stop loss derived from it)
+        instead of appending a second row for a counter we already own - a
+        duplicate row hides the true position size from the sell and stop-loss
+        paths, which only look at the first matching row.
+        Returns True when an existing position was updated.
+        """
+        if self.portfolio.empty or 'ticker' not in self.portfolio.columns:
+            return False
+
+        mask = self.portfolio['ticker'] == full_ticker
+        if not mask.any():
+            return False
+
+        idx = self.portfolio[mask].index[0]
+        old_shares = float(self.portfolio.loc[idx, 'shares'])
+        old_cost = float(self.portfolio.loc[idx, 'avg_cost_myr'])
+        total_shares = old_shares + shares
+        if total_shares <= 0:
+            return False
+
+        # 8dp on the cost basis: a coarser average visibly shifts total cost on
+        # positions of 100k+ shares.
+        avg_cost = round((old_shares * old_cost + shares * price) / total_shares, 8)
+        stop_loss = round(avg_cost * (1 - stop_loss_pct / 100), 6)
+
+        self.portfolio.loc[idx, 'shares'] = int(total_shares) if total_shares.is_integer() else total_shares
+        self.portfolio.loc[idx, 'avg_cost_myr'] = avg_cost
+        self.portfolio.loc[idx, 'stop_loss_myr'] = stop_loss
+        if 'current_price_myr' in self.portfolio.columns:
+            self.portfolio.loc[idx, 'current_price_myr'] = price
+        if 'market_value_myr' in self.portfolio.columns:
+            self.portfolio.loc[idx, 'market_value_myr'] = round(total_shares * price, 2)
+
+        logger.info(
+            f"Merged {shares:,} shares of {full_ticker} at {price:.3f} into existing "
+            f"{old_shares:,.0f} @ {old_cost:.3f} -> {total_shares:,.0f} @ {avg_cost:.4f} MYR "
+            f"(stop loss {stop_loss:.4f})"
+        )
+        return True
+
     def add_stock(self, ticker: str, target_weight_pct: float, stop_loss_pct: float = 15.0, 
                   company_name: str = "", sector: str = "") -> bool:
         """
@@ -412,21 +456,23 @@ class KLSEPortfolioManager:
         # Calculate stop loss price
         stop_loss_price = current_price * (1 - stop_loss_pct / 100)
         
-        # Add to portfolio
-        new_position = {
-            'date_added': datetime.now().strftime("%Y-%m-%d"),
-            'ticker': full_ticker,
-            'company_name': company_name or full_ticker,
-            'shares': shares,
-            'avg_cost_myr': current_price,
-            'stop_loss_myr': round(stop_loss_price, 3),
-            'sector': sector,
-            'market_cap_myr': market_cap,
-            'target_weight_pct': target_weight_pct
-        }
-        
-        # Add to portfolio DataFrame
-        self.portfolio = pd.concat([self.portfolio, pd.DataFrame([new_position])], ignore_index=True)
+        # Fold into the existing holding if we already own this counter
+        if not self._merge_into_existing_position(full_ticker, shares, current_price, stop_loss_pct):
+            # Add to portfolio
+            new_position = {
+                'date_added': datetime.now().strftime("%Y-%m-%d"),
+                'ticker': full_ticker,
+                'company_name': company_name or full_ticker,
+                'shares': shares,
+                'avg_cost_myr': current_price,
+                'stop_loss_myr': round(stop_loss_price, 3),
+                'sector': sector,
+                'market_cap_myr': market_cap,
+                'target_weight_pct': target_weight_pct
+            }
+
+            # Add to portfolio DataFrame
+            self.portfolio = pd.concat([self.portfolio, pd.DataFrame([new_position])], ignore_index=True)
         
         # Update cash
         self.current_cash_myr -= cost
@@ -509,21 +555,23 @@ class KLSEPortfolioManager:
             logger.error(f"Stop loss {stop_loss_price:.3f} is not below cost basis {current_price:.3f}")
             return {'success': False, 'error': 'Stop loss must be below cost basis'}
         
-        # Create new position
-        new_position = {
-            'date_added': datetime.now().strftime('%Y-%m-%d'),
-            'ticker': full_ticker,
-            'company_name': company_name or ticker,
-            'shares': shares,
-            'avg_cost_myr': current_price,
-            'stop_loss_myr': stop_loss_price,
-            'sector': sector or 'Unknown',
-            'current_price_myr': current_price,
-            'market_value_myr': cost
-        }
-        
-        # Add to portfolio
-        self.portfolio = pd.concat([self.portfolio, pd.DataFrame([new_position])], ignore_index=True)
+        # Fold into the existing holding if we already own this counter
+        if not self._merge_into_existing_position(full_ticker, shares, current_price, stop_loss_pct):
+            # Create new position
+            new_position = {
+                'date_added': datetime.now().strftime('%Y-%m-%d'),
+                'ticker': full_ticker,
+                'company_name': company_name or ticker,
+                'shares': shares,
+                'avg_cost_myr': current_price,
+                'stop_loss_myr': stop_loss_price,
+                'sector': sector or 'Unknown',
+                'current_price_myr': current_price,
+                'market_value_myr': cost
+            }
+
+            # Add to portfolio
+            self.portfolio = pd.concat([self.portfolio, pd.DataFrame([new_position])], ignore_index=True)
         
         # Update cash balance
         self.current_cash_myr -= cost
