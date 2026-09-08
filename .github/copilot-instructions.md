@@ -87,7 +87,7 @@ This repo tracks AI-driven trading decisions across both markets, comparing perf
 - **Micro-cap only**: Market cap < 300M MYR requirement
 - **Board lots**: Minimum 100 shares per transaction (Malaysian standard)
 - **MYR currency**: 3-decimal precision for Malaysian Ringgit
-- **Stop-loss automated**: 15% below cost basis (configurable)
+- **Stop-loss automated**: trailing, 15% below the high-water mark (configurable per position via `trail_pct`)
 - **10,000 MYR starting capital**: Initial Malaysian investment
 - **Market hours**: 9:00-17:00 GMT+8 validation
 - **Position limits**: Maximum 10 active positions, 500 MYR minimum cash reserve

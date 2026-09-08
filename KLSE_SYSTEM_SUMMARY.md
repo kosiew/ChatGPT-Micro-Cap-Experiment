@@ -17,7 +17,7 @@ This document summarizes the complete Malaysian KLSE (Kuala Lumpur Stock Exchang
 1. **Portfolio Management System** (`klse_portfolio_manager.py`)
    - Malaysian board lot management (100 shares minimum)
    - MYR currency with 3-decimal precision
-   - Automatic stop-loss monitoring (15% default)
+   - Automatic trailing stop-loss monitoring (15% trail by default)
    - Market hours validation (9:00-17:00 GMT+8)
    - Redundant data source integration
 
@@ -56,7 +56,7 @@ This document summarizes the complete Malaysian KLSE (Kuala Lumpur Stock Exchang
 - **Board Lot Size:** 100 shares (Malaysian standard)
 - **Micro-Cap Threshold:** < 300M MYR market cap
 - **Minimum Investment:** 50M MYR market cap floor
-- **Stop Loss:** 15% below cost basis
+- **Stop Loss:** trailing, 15% below the highest price seen since entry (ratchets up, never down)
 - **Cash Reserve:** 500 MYR minimum
 
 ---

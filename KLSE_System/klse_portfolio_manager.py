@@ -46,6 +46,11 @@ class KLSEPortfolioManager:
         else:
             self.data_fetcher = None
         
+        # Trailing stop loss: the stop trails the highest price seen since entry
+        # (the high-water mark), not the average purchase price, so it ratchets
+        # up with a winning position to lock in gains and never moves down.
+        self.DEFAULT_TRAIL_PCT = 15.0
+
         # Malaysian market constants
         self.BOARD_LOT_SIZE = 100  # Standard Malaysian board lot
         self.MICROCAP_THRESHOLD_MYR = 300_000_000  # 300M MYR
@@ -87,9 +92,9 @@ class KLSEPortfolioManager:
         
         Checks:
         1. Cost basis must be > 0
-        2. Stop loss must be < cost basis (15% below)
+        2. Stop loss must be < the high-water mark (trailing by trail_pct)
         3. Shares must be > 0
-        4. Stop loss should be approximately 85% of cost basis (within reason)
+        4. Stop loss should sit close to the trail implied by the high-water mark
         """
         if portfolio.empty:
             return portfolio
@@ -102,6 +107,8 @@ class KLSEPortfolioManager:
             avg_cost = row['avg_cost_myr']
             stop_loss = row['stop_loss_myr']
             shares = row['shares']
+            highest = float(row.get('highest_price_myr') or 0) or avg_cost
+            trail_pct = float(row.get('trail_pct') or self.DEFAULT_TRAIL_PCT)
             
             has_error = False
             error_details = []
@@ -116,25 +123,25 @@ class KLSEPortfolioManager:
                 has_error = True
                 error_details.append(f"Invalid shares: {shares} (must be > 0)")
             
-            # Validation 3: Stop loss must be less than cost basis
-            if avg_cost > 0 and stop_loss >= avg_cost:
+            # Validation 3: Stop loss must be below the high-water mark. It may
+            # legitimately sit above the cost basis - a trailing stop that has
+            # ratcheted up on a winner is exactly that.
+            if highest > 0 and stop_loss >= highest:
                 has_error = True
                 error_details.append(
-                    f"Invalid stop loss: {stop_loss:.3f} MYR >= cost basis {avg_cost:.3f} MYR "
-                    f"(stop loss must be below cost basis)"
+                    f"Invalid stop loss: {stop_loss:.3f} MYR >= high-water mark {highest:.3f} MYR "
+                    f"(stop loss must trail below the highest price seen)"
                 )
             
-            # Validation 4: Stop loss should be approximately 85% of cost (allow 70-95% range)
-            if avg_cost > 0:
-                stop_loss_ratio = stop_loss / avg_cost
-                expected_ratio = 0.85  # 15% below cost
-                
-                # Allow reasonable variance (70% to 95% of cost basis)
-                if stop_loss_ratio < 0.70 or stop_loss_ratio > 0.95:
+            # Validation 4: Stop loss should match the trail implied by the
+            # high-water mark, within a tolerance for rounding and manual edits.
+            if highest > 0:
+                expected_stop = self._trailing_stop_price(highest, trail_pct)
+                if abs(stop_loss - expected_stop) > max(0.01, expected_stop * 0.05):
                     has_error = True
                     error_details.append(
-                        f"Suspicious stop loss ratio: {stop_loss_ratio:.2%} of cost basis "
-                        f"(expected ~85%, got {stop_loss:.3f} MYR vs cost {avg_cost:.3f} MYR)"
+                        f"Stop loss {stop_loss:.3f} MYR does not match a {trail_pct:.0f}% trail "
+                        f"below the high-water mark {highest:.3f} MYR (expected ~{expected_stop:.3f} MYR)"
                     )
             
             # Validation 5: Stop loss must be positive
@@ -181,11 +188,108 @@ class KLSEPortfolioManager:
         
         return portfolio
     
+    @staticmethod
+    def _trailing_stop_price(highest_price: float, trail_pct: float) -> float:
+        """Stop price implied by a high-water mark and a trail percentage."""
+        return round(float(highest_price) * (1 - float(trail_pct) / 100), 3)
+
+    def _seed_high_water_mark(self, row) -> float:
+        """Starting high-water mark for a position being converted.
+
+        Deliberately seeded from today's price rather than the historical peak
+        since entry: the trail starts here and ratchets up from today onwards,
+        so a drawdown that already happened does not fire a stop on the very
+        first run. Floored at the entry price so the converted stop is never
+        looser than the cost-based one it replaces.
+        """
+        avg_cost = float(row['avg_cost_myr'])
+
+        seed = None
+        try:
+            stock_data = self._get_stock_data(row['ticker'])
+            if stock_data and stock_data.get('price'):
+                seed = float(stock_data['price'])
+        except Exception as exc:
+            logger.warning(f"Could not fetch today's price for {row['ticker']}: {exc}")
+
+        if seed is None:
+            # Only when today's price is unavailable: the last price the
+            # portfolio recorded is a better guess than the cost basis alone.
+            seed = float(row.get('current_price_myr') or 0)
+
+        return max(avg_cost, seed)
+
+    def _ensure_trailing_columns(self, portfolio: pd.DataFrame) -> pd.DataFrame:
+        """Add and backfill the trailing-stop columns on a legacy portfolio.
+
+        Runs once: a portfolio written before trailing stops has no
+        highest_price_myr, so the high-water mark is seeded from today's price
+        and the trail ratchets up from there.
+        """
+        if portfolio.empty:
+            for column in ('highest_price_myr', 'trail_pct'):
+                if column not in portfolio.columns:
+                    portfolio[column] = pd.Series(dtype='float64')
+            return portfolio
+
+        if 'trail_pct' not in portfolio.columns:
+            portfolio['trail_pct'] = self.DEFAULT_TRAIL_PCT
+        portfolio['trail_pct'] = pd.to_numeric(
+            portfolio['trail_pct'], errors='coerce').fillna(self.DEFAULT_TRAIL_PCT)
+
+        seeding = 'highest_price_myr' not in portfolio.columns
+        if seeding:
+            portfolio['highest_price_myr'] = np.nan
+            logger.info("Backfilling trailing-stop high-water marks from price history")
+
+        for idx, row in portfolio.iterrows():
+            if pd.notna(row.get('highest_price_myr')) and float(row['highest_price_myr']) > 0:
+                continue
+
+            ticker = row['ticker']
+            peak = self._seed_high_water_mark(row)
+
+            trail_pct = float(portfolio.at[idx, 'trail_pct'])
+            portfolio.at[idx, 'highest_price_myr'] = round(peak, 3)
+            portfolio.at[idx, 'stop_loss_myr'] = self._trailing_stop_price(peak, trail_pct)
+
+            if seeding:
+                logger.info(
+                    f"  {ticker}: high-water mark {peak:.3f} MYR -> trailing stop "
+                    f"{portfolio.at[idx, 'stop_loss_myr']:.3f} MYR ({trail_pct:.0f}% trail)"
+                )
+
+        return portfolio
+
+    def _ratchet_trailing_stop(self, idx, current_price: float) -> bool:
+        """Raise the high-water mark and stop if price made a new high.
+
+        Returns True when the stop moved. The stop only ever ratchets up: a
+        falling price leaves it where it is, which is what makes it a stop.
+        """
+        trail_pct = float(self.portfolio.at[idx, 'trail_pct'])
+        previous_high = float(self.portfolio.at[idx, 'highest_price_myr'])
+        if current_price <= previous_high:
+            return False
+
+        new_stop = self._trailing_stop_price(current_price, trail_pct)
+        self.portfolio.at[idx, 'highest_price_myr'] = round(current_price, 3)
+        self.portfolio.at[idx, 'stop_loss_myr'] = new_stop
+        logger.info(
+            f"📈 {self.portfolio.at[idx, 'ticker']}: new high {current_price:.3f} MYR "
+            f"(was {previous_high:.3f}) -> trailing stop raised to {new_stop:.3f} MYR"
+        )
+        return True
+
     def _load_portfolio(self) -> pd.DataFrame:
         """Load existing portfolio or create new one"""
         if os.path.exists(self.portfolio_file):
             portfolio = pd.read_csv(self.portfolio_file)
             logger.info(f"Loaded existing portfolio with {len(portfolio)} positions")
+            
+            # Backfill trailing-stop columns before validating: the validator
+            # judges the stop against the high-water mark, not the cost basis.
+            portfolio = self._ensure_trailing_columns(portfolio)
             
             # Validate loaded portfolio data
             portfolio = self._validate_portfolio_data(portfolio)
@@ -193,7 +297,8 @@ class KLSEPortfolioManager:
             # Create empty portfolio
             portfolio = pd.DataFrame(columns=[
                 'date_added', 'ticker', 'company_name', 'shares', 'avg_cost_myr', 
-                'stop_loss_myr', 'sector', 'market_cap_myr', 'target_weight_pct'
+                'stop_loss_myr', 'highest_price_myr', 'trail_pct', 'sector',
+                'market_cap_myr', 'target_weight_pct'
             ])
             logger.info("Created new empty portfolio")
         
@@ -391,12 +496,18 @@ class KLSEPortfolioManager:
         if total_shares <= 0:
             return keep
 
-        # Share-weighted averages keep the aggregate cost basis and stop level intact
+        # Share-weighted average keeps the aggregate cost basis intact. The
+        # high-water mark is a maximum, not an average - averaging it would
+        # lower the peak the trail is anchored to and loosen the stop.
         avg_cost = round(float((shares * rows['avg_cost_myr'].astype(float)).sum()) / total_shares, 8)
-        avg_stop = round(float((shares * rows['stop_loss_myr'].astype(float)).sum()) / total_shares, 6)
+        trail_pct = float(rows['trail_pct'].astype(float).min())
+        highest = float(rows['highest_price_myr'].astype(float).max())
+        avg_stop = self._trailing_stop_price(highest, trail_pct)
 
         self.portfolio.loc[keep, 'shares'] = int(total_shares) if total_shares.is_integer() else total_shares
         self.portfolio.loc[keep, 'avg_cost_myr'] = avg_cost
+        self.portfolio.loc[keep, 'highest_price_myr'] = round(highest, 3)
+        self.portfolio.loc[keep, 'trail_pct'] = trail_pct
         self.portfolio.loc[keep, 'stop_loss_myr'] = avg_stop
         if 'current_price_myr' in self.portfolio.columns:
             prices = rows['current_price_myr'].astype(float).dropna()
@@ -417,10 +528,11 @@ class KLSEPortfolioManager:
                                       stop_loss_pct: float) -> bool:
         """Fold a new buy into an existing holding of the same ticker.
 
-        Recomputes the weighted average cost (and the stop loss derived from it)
-        instead of appending a second row for a counter we already own - a
-        duplicate row hides the true position size from the sell and stop-loss
-        paths, which only look at the first matching row.
+        Recomputes the weighted average cost instead of appending a second row
+        for a counter we already own - a duplicate row hides the true position
+        size from the sell and stop-loss paths, which only look at the first
+        matching row. The trailing stop is re-derived from the high-water mark,
+        which topping up can only raise, never lower.
         Returns True when an existing position was updated.
         """
         idx = self._consolidate_position_rows(full_ticker)
@@ -436,10 +548,14 @@ class KLSEPortfolioManager:
         # 8dp on the cost basis: a coarser average visibly shifts total cost on
         # positions of 100k+ shares.
         avg_cost = round((old_shares * old_cost + shares * price) / total_shares, 8)
-        stop_loss = round(avg_cost * (1 - stop_loss_pct / 100), 6)
+        old_high = float(self.portfolio.loc[idx, 'highest_price_myr'] or 0)
+        highest = max(old_high, price)
+        stop_loss = self._trailing_stop_price(highest, stop_loss_pct)
 
         self.portfolio.loc[idx, 'shares'] = int(total_shares) if total_shares.is_integer() else total_shares
         self.portfolio.loc[idx, 'avg_cost_myr'] = avg_cost
+        self.portfolio.loc[idx, 'highest_price_myr'] = round(highest, 3)
+        self.portfolio.loc[idx, 'trail_pct'] = stop_loss_pct
         self.portfolio.loc[idx, 'stop_loss_myr'] = stop_loss
         if 'current_price_myr' in self.portfolio.columns:
             self.portfolio.loc[idx, 'current_price_myr'] = price
@@ -449,7 +565,7 @@ class KLSEPortfolioManager:
         logger.info(
             f"Merged {shares:,} shares of {full_ticker} at {price:.3f} into existing "
             f"{old_shares:,.0f} @ {old_cost:.3f} -> {total_shares:,.0f} @ {avg_cost:.4f} MYR "
-            f"(stop loss {stop_loss:.4f})"
+            f"(high-water mark {highest:.3f}, trailing stop {stop_loss:.4f})"
         )
         return True
 
@@ -461,7 +577,7 @@ class KLSEPortfolioManager:
         Args:
             ticker: Malaysian stock code (e.g., "1155" for Maybank)
             target_weight_pct: Target weight as percentage of portfolio
-            stop_loss_pct: Stop loss percentage below cost basis
+            stop_loss_pct: Trailing stop percentage below the high-water mark
             company_name: Company name for records
             sector: Business sector
         """
@@ -500,8 +616,8 @@ class KLSEPortfolioManager:
             logger.error(f"Insufficient cash for even 1 board lot of {full_ticker}")
             return False
         
-        # Calculate stop loss price
-        stop_loss_price = current_price * (1 - stop_loss_pct / 100)
+        # Trailing stop: the entry price is the first high-water mark
+        stop_loss_price = self._trailing_stop_price(current_price, stop_loss_pct)
         
         # Fold into the existing holding if we already own this counter
         if not self._merge_into_existing_position(full_ticker, shares, current_price, stop_loss_pct):
@@ -512,7 +628,9 @@ class KLSEPortfolioManager:
                 'company_name': company_name or full_ticker,
                 'shares': shares,
                 'avg_cost_myr': current_price,
-                'stop_loss_myr': round(stop_loss_price, 3),
+                'stop_loss_myr': stop_loss_price,
+                'highest_price_myr': round(current_price, 3),
+                'trail_pct': stop_loss_pct,
                 'sector': sector,
                 'market_cap_myr': market_cap,
                 'target_weight_pct': target_weight_pct
@@ -543,7 +661,7 @@ class KLSEPortfolioManager:
             ticker: Malaysian stock code (e.g., "1155" for Maybank)
             shares: Exact number of shares to add
             price: Price per share (if None, uses current market price)
-            stop_loss_pct: Stop loss percentage below cost basis
+            stop_loss_pct: Trailing stop percentage below the high-water mark
             company_name: Company name for records
             sector: Business sector
         """
@@ -590,8 +708,8 @@ class KLSEPortfolioManager:
             self.current_cash_myr += cash_needed
             logger.info(f"   Previous cash: {prev_cash:.2f} MYR -> New cash: {self.current_cash_myr:.2f} MYR")
         
-        # Calculate stop loss price
-        stop_loss_price = current_price * (1 - stop_loss_pct / 100)
+        # Trailing stop: the entry price is the first high-water mark
+        stop_loss_price = self._trailing_stop_price(current_price, stop_loss_pct)
         
         # Validate stop loss calculation
         if stop_loss_price <= 0:
@@ -599,8 +717,8 @@ class KLSEPortfolioManager:
             return {'success': False, 'error': 'Invalid stop loss calculation'}
         
         if stop_loss_price >= current_price:
-            logger.error(f"Stop loss {stop_loss_price:.3f} is not below cost basis {current_price:.3f}")
-            return {'success': False, 'error': 'Stop loss must be below cost basis'}
+            logger.error(f"Stop loss {stop_loss_price:.3f} is not below entry price {current_price:.3f}")
+            return {'success': False, 'error': 'Stop loss must be below the entry price'}
         
         # Fold into the existing holding if we already own this counter
         if not self._merge_into_existing_position(full_ticker, shares, current_price, stop_loss_pct):
@@ -612,6 +730,8 @@ class KLSEPortfolioManager:
                 'shares': shares,
                 'avg_cost_myr': current_price,
                 'stop_loss_myr': stop_loss_price,
+                'highest_price_myr': round(current_price, 3),
+                'trail_pct': stop_loss_pct,
                 'sector': sector or 'Unknown',
                 'current_price_myr': current_price,
                 'market_value_myr': cost
@@ -834,11 +954,12 @@ class KLSEPortfolioManager:
         
         logger.info(f"Processing daily update for {len(self.portfolio)} positions")
         
+        stops_raised = []
+
         for idx, position in self.portfolio.iterrows():
             ticker = position['ticker']
             shares = position['shares']
             cost_basis = position['avg_cost_myr']
-            stop_loss = position['stop_loss_myr']
             
             # Get current stock data
             stock_data = self._get_stock_data(ticker)
@@ -848,6 +969,20 @@ class KLSEPortfolioManager:
                 continue
             
             current_price = stock_data['price']
+
+            # Ratchet the trailing stop up on a new high before testing it, so a
+            # position that peaked and closed lower on the same day is measured
+            # against the trail from that new peak.
+            if self._ratchet_trailing_stop(idx, current_price):
+                stops_raised.append({
+                    'ticker': ticker,
+                    'company_name': position.get('company_name', ''),
+                    'highest_price': float(self.portfolio.at[idx, 'highest_price_myr']),
+                    'stop_loss': float(self.portfolio.at[idx, 'stop_loss_myr'])
+                })
+            stop_loss = float(self.portfolio.at[idx, 'stop_loss_myr'])
+            highest_price = float(self.portfolio.at[idx, 'highest_price_myr'])
+
             position_value = current_price * shares
             position_pnl = (current_price - cost_basis) * shares
             
@@ -861,12 +996,15 @@ class KLSEPortfolioManager:
                     'stop_price': current_price,
                     'cost_basis': cost_basis,
                     'stop_loss': stop_loss,
+                    'highest_price': highest_price,
+                    'trail_pct': float(self.portfolio.at[idx, 'trail_pct']),
                     'pnl': position_pnl
                 })
                 
                 # Log alert message
-                logger.warning(f"🚨 STOP LOSS ALERT: {ticker} ({position.get('company_name','')}) has hit stop loss!")
-                logger.warning(f"   Current Price: {current_price:.3f} MYR | Stop Loss: {stop_loss:.3f} MYR")
+                logger.warning(f"🚨 TRAILING STOP ALERT: {ticker} ({position.get('company_name','')}) has hit its trailing stop!")
+                logger.warning(f"   Current Price: {current_price:.3f} MYR | Stop Loss: {stop_loss:.3f} MYR "
+                               f"| High-Water Mark: {highest_price:.3f} MYR")
                 logger.warning(f"   Position: {shares} shares | Potential Loss: {position_pnl:.2f} MYR")
                 logger.warning(f"   ⚠️  Manual action required - trade NOT automatically executed")
                 
@@ -881,6 +1019,7 @@ class KLSEPortfolioManager:
                     'shares': shares,
                     'cost_basis': cost_basis,
                     'stop_loss': stop_loss,
+                    'highest_price': highest_price,
                     'current_price': current_price,
                     'position_value': position_value,
                     'position_pnl': position_pnl,
@@ -900,6 +1039,7 @@ class KLSEPortfolioManager:
                     'shares': shares,
                     'cost_basis': cost_basis,
                     'stop_loss': stop_loss,
+                    'highest_price': highest_price,
                     'current_price': current_price,
                     'position_value': position_value,
                     'position_pnl': position_pnl,
@@ -924,7 +1064,9 @@ class KLSEPortfolioManager:
             'total_return_pct': total_return_pct,
             'positions': len(self.portfolio),
             'stops_triggered': len(stops_triggered),
-            'stop_details': stops_triggered
+            'stop_details': stops_triggered,
+            'stops_raised': len(stops_raised),
+            'raised_details': stops_raised
         }
 
         logger.info(f"Daily update complete: {total_equity:.2f} MYR total equity ({total_return_pct:+.2f}%)")
@@ -978,6 +1120,8 @@ class KLSEPortfolioManager:
                     'position_pnl': position_pnl,
                     'position_return_pct': position_return_pct,
                     'stop_loss': position['stop_loss_myr'],
+                    'highest_price': position.get('highest_price_myr', position['avg_cost_myr']),
+                    'trail_pct': position.get('trail_pct', self.DEFAULT_TRAIL_PCT),
                     'sector': position['sector']
                 })
             else:

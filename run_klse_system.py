@@ -995,7 +995,7 @@ def buy_stock(
     ticker: Annotated[str, typer.Argument(help="Stock ticker (e.g., gamuda, 1155)")],
     shares: Annotated[int, typer.Argument(help="Number of shares to buy")],
     price: Annotated[float, typer.Argument(help="Price per share in MYR")],
-    stop_loss: Annotated[float, typer.Option("--stop-loss", "-s", help="Stop loss percentage")] = 15.0,
+    stop_loss: Annotated[float, typer.Option("--stop-loss", "-s", help="Trailing stop percentage below the high-water mark")] = 15.0,
     reason: Annotated[str, typer.Option("--reason", "-r", help="Reason for purchase")] = "Manual buy",
     alpha_vantage_key: Annotated[
         Optional[str], 

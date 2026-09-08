@@ -36,6 +36,11 @@ def fix_portfolio_data():
         cost_basis = row['avg_cost_myr']
         stop_loss = row['stop_loss_myr']
         company = row.get('company_name', ticker)
+        # Stops trail the high-water mark, so that - not the cost basis - is
+        # what a stop must be checked against. Anchoring to cost here would
+        # reset every trailing stop that has ratcheted up on a winner.
+        trail_pct = float(row.get('trail_pct') or 15.0)
+        highest = float(row.get('highest_price_myr') or 0) or cost_basis
         
         needs_correction = False
         
@@ -48,32 +53,34 @@ def fix_portfolio_data():
             print()
             continue
         
-        if stop_loss >= cost_basis or stop_loss <= 0:
+        if stop_loss >= highest or stop_loss <= 0:
             needs_correction = True
-            correct_stop_loss = cost_basis * 0.85  # 15% below cost
+            correct_stop_loss = highest * (1 - trail_pct / 100)
             
             print(f"🔧 {ticker} ({company})")
-            print(f"   Cost Basis: {cost_basis:.3f} MYR")
+            print(f"   High-Water Mark: {highest:.3f} MYR (cost basis {cost_basis:.3f} MYR)")
             print(f"   OLD Stop Loss: {stop_loss:.3f} MYR ❌")
-            print(f"   NEW Stop Loss: {correct_stop_loss:.3f} MYR ✅ (15% below cost)")
+            print(f"   NEW Stop Loss: {correct_stop_loss:.3f} MYR ✅ "
+                  f"({trail_pct:.0f}% below the high-water mark)")
             
             # Apply correction
             df.at[idx, 'stop_loss_myr'] = round(correct_stop_loss, 3)
             corrections_made += 1
             print()
         
-        elif cost_basis > 0:
-            # Check if stop loss ratio is suspicious
-            stop_loss_ratio = stop_loss / cost_basis
+        elif highest > 0:
+            # Check whether the stop still matches the configured trail
+            stop_loss_ratio = stop_loss / highest
+            expected_ratio = 1 - trail_pct / 100
             
-            if stop_loss_ratio < 0.70 or stop_loss_ratio > 0.95:
-                correct_stop_loss = cost_basis * 0.85
+            if abs(stop_loss_ratio - expected_ratio) > 0.05:
+                correct_stop_loss = highest * expected_ratio
                 
                 print(f"⚠️  {ticker} ({company})")
-                print(f"   Cost Basis: {cost_basis:.3f} MYR")
-                print(f"   Current Stop Loss: {stop_loss:.3f} MYR ({stop_loss_ratio:.1%} of cost)")
-                print(f"   Recommended: {correct_stop_loss:.3f} MYR (85% of cost)")
-                print(f"   ℹ️  Outside normal range (70-95%) - review recommended")
+                print(f"   High-Water Mark: {highest:.3f} MYR")
+                print(f"   Current Stop Loss: {stop_loss:.3f} MYR ({stop_loss_ratio:.1%} of the high)")
+                print(f"   Recommended: {correct_stop_loss:.3f} MYR ({expected_ratio:.0%} of the high)")
+                print(f"   ℹ️  Does not match the {trail_pct:.0f}% trail - review recommended")
                 print()
     
     if corrections_made > 0:

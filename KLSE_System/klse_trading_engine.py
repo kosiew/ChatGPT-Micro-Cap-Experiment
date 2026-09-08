@@ -261,7 +261,7 @@ class KLSETradingEngine:
         Args:
             ticker: Malaysian stock code or name (e.g., "MBMR", "1155", "AXIATA")
             target_weight_pct: Target weight as percentage of portfolio
-            stop_loss_pct: Stop loss percentage below cost basis
+            stop_loss_pct: Trailing stop percentage below the high-water mark
             company_name: Company name for records
             sector: Business sector
         """
@@ -313,7 +313,7 @@ class KLSETradingEngine:
             ticker: Malaysian stock code or name (e.g., "MBMR", "1155", "AXIATA")
             shares: Exact number of shares to buy
             price: Price per share (if None, uses current market price)
-            stop_loss_pct: Stop loss percentage below cost basis
+            stop_loss_pct: Trailing stop percentage below the high-water mark
             company_name: Company name for records
             sector: Business sector
             
@@ -571,8 +571,9 @@ class KLSETradingEngine:
                 report.append("")
                 for pos in alert_positions:
                     name = pos.get('company_name') or pos.get('ticker')
-                    report.append(f"⚠️  {name}: {pos['shares']} shares - STOP LOSS HIT")
-                    report.append(f"   Price: {pos['current_price']:.3f} MYR (Stop: {pos['stop_loss']:.3f})")
+                    report.append(f"⚠️  {name}: {pos['shares']} shares - TRAILING STOP HIT")
+                    report.append(f"   Price: {pos['current_price']:.3f} MYR (Stop: {pos['stop_loss']:.3f}"
+                                  f", High: {pos.get('highest_price', pos['avg_cost']):.3f})")
                     report.append(f"   Value: {pos['position_value']:,.2f} MYR")
                     report.append(f"   PnL: {pos['position_pnl']:+,.2f} MYR ({pos['position_return_pct']:+.2f}%)")
                     report.append(f"   📋 ACTION REQUIRED: Manual sell decision needed")
@@ -589,7 +590,9 @@ class KLSETradingEngine:
                     report.append(f"   Price: {pos['current_price']:.3f} MYR (Cost: {pos['avg_cost']:.3f})")
                     report.append(f"   Value: {pos['position_value']:,.2f} MYR")
                     report.append(f"   PnL: {pos['position_pnl']:+,.2f} MYR ({pos['position_return_pct']:+.2f}%)")
-                    report.append(f"   Stop Loss: {pos['stop_loss']:.3f} MYR")
+                    report.append(f"   Stop Loss: {pos['stop_loss']:.3f} MYR "
+                                  f"({pos.get('trail_pct', 15.0):.0f}% trail from high "
+                                  f"{pos.get('highest_price', pos['avg_cost']):.3f})")
                     report.append("")
         else:
             report.append("📋 No active positions")
@@ -628,14 +631,18 @@ def daily_processing(
         if summary['stops_triggered'] > 0:
             typer.echo("")
             typer.echo("=" * 60)
-            typer.echo(f"🚨 STOP LOSS ALERTS: {summary['stops_triggered']} position(s) hit stop loss")
+            typer.echo(f"🚨 TRAILING STOP ALERTS: {summary['stops_triggered']} position(s) hit their trailing stop")
             typer.echo("=" * 60)
             
             for alert in result['stops_triggered']:
                 display = alert.get('company_name') or alert.get('ticker')
+                trail_pct = alert.get('trail_pct', 15.0)
+                highest = alert.get('highest_price')
                 typer.echo(f"\n⚠️  {display}")
                 typer.echo(f"   Current Price: {alert['stop_price']:.3f} MYR")
-                typer.echo(f"   Stop Loss: {alert['stop_loss']:.3f} MYR (15% below cost)")
+                anchor = (f"{trail_pct:.0f}% below high of {highest:.3f} MYR"
+                          if highest else f"{trail_pct:.0f}% trail")
+                typer.echo(f"   Stop Loss: {alert['stop_loss']:.3f} MYR ({anchor})")
                 typer.echo(f"   Shares: {alert['shares']}")
                 typer.echo(f"   Potential Loss: {alert['pnl']:.2f} MYR")
                 typer.echo(f"   📋 ACTION REQUIRED: Manual sell decision needed")
@@ -703,7 +710,7 @@ def demo_mode(
 def add_position(
     ticker: Annotated[str, typer.Argument(help="Stock ticker (e.g., 1155 for Maybank)")],
     target_weight: Annotated[float, typer.Argument(help="Target weight as percentage")],
-    stop_loss: Annotated[float, typer.Option("--stop-loss", "-s", help="Stop loss percentage")] = 15.0,
+    stop_loss: Annotated[float, typer.Option("--stop-loss", "-s", help="Trailing stop percentage below the high-water mark")] = 15.0,
     company_name: Annotated[str, typer.Option("--name", "-n", help="Company name")] = "",
     sector: Annotated[str, typer.Option("--sector", help="Business sector")] = "",
     alpha_vantage_key: Annotated[
@@ -733,7 +740,7 @@ def buy_shares(
     ticker: Annotated[str, typer.Argument(help="Stock ticker (e.g., 1155 for Maybank)")],
     shares: Annotated[int, typer.Argument(help="Number of shares to buy")],
     price: Annotated[float, typer.Argument(help="Price per share in MYR")],
-    stop_loss: Annotated[float, typer.Option("--stop-loss", "-s", help="Stop loss percentage")] = 15.0,
+    stop_loss: Annotated[float, typer.Option("--stop-loss", "-s", help="Trailing stop percentage below the high-water mark")] = 15.0,
     company_name: Annotated[str, typer.Option("--name", "-n", help="Company name")] = "",
     sector: Annotated[str, typer.Option("--sector", help="Business sector")] = "",
     alpha_vantage_key: Annotated[
