@@ -28,6 +28,22 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+def append_row(frame: pd.DataFrame, row: pd.DataFrame) -> pd.DataFrame:
+    """Append `row` to `frame`, skipping the concat when `frame` has no rows.
+
+    pandas deprecated concatenating with empty or all-NA entries, and a
+    column-only frame - a fresh portfolio, or a CSV holding nothing but its
+    header - is exactly that. Reindexing onto the declared columns keeps the
+    file's schema instead of letting the first row define it.
+    """
+    if frame is None:
+        return row
+    if frame.empty:
+        columns = list(dict.fromkeys(list(frame.columns) + list(row.columns)))
+        return row.reindex(columns=columns)
+    return pd.concat([frame, row], ignore_index=True)
+
+
 class KLSEPortfolioManager:
     """
     Comprehensive KLSE portfolio management system
@@ -651,7 +667,7 @@ class KLSEPortfolioManager:
             }
 
             # Add to portfolio DataFrame
-            self.portfolio = pd.concat([self.portfolio, pd.DataFrame([new_position])], ignore_index=True)
+            self.portfolio = append_row(self.portfolio, pd.DataFrame([new_position]))
         
         # Update cash
         self.current_cash_myr -= cost
@@ -753,7 +769,7 @@ class KLSEPortfolioManager:
             }
 
             # Add to portfolio
-            self.portfolio = pd.concat([self.portfolio, pd.DataFrame([new_position])], ignore_index=True)
+            self.portfolio = append_row(self.portfolio, pd.DataFrame([new_position]))
         
         # Update cash balance
         self.current_cash_myr -= cost
@@ -994,7 +1010,7 @@ class KLSEPortfolioManager:
         
         if os.path.exists(self.trade_log_file):
             existing_trades = pd.read_csv(self.trade_log_file)
-            trade_df = pd.concat([existing_trades, trade_df], ignore_index=True)
+            trade_df = append_row(existing_trades, trade_df)
         
         trade_df.to_csv(self.trade_log_file, index=False)
         logger.info(f"Trade logged: {action} {shares} shares of {ticker}")

@@ -25,7 +25,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import our portfolio manager and data fetcher
 try:
-    from KLSE_System.klse_portfolio_manager import KLSEPortfolioManager
+    from KLSE_System.klse_portfolio_manager import KLSEPortfolioManager, append_row
     from KLSE_System.i3investor_scraper import I3InvestorScraper
     from redundant_data_fetcher import KLSEDataFetcher
     ENHANCED_AVAILABLE = True
@@ -33,6 +33,12 @@ except ImportError as e:
     print(f"⚠️  Import error: {e}")
     print("   Falling back to basic functionality")
     ENHANCED_AVAILABLE = False
+
+    def append_row(frame, row):
+        """Local stand-in when the portfolio manager cannot be imported."""
+        if frame is None or frame.empty:
+            return row
+        return pd.concat([frame, row], ignore_index=True)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -196,7 +202,7 @@ class KLSETradingEngine:
             existing = pd.read_csv(self.daily_update_file)
             # Check if today's record already exists
             if record['date'] not in existing['date'].values:
-                df = pd.concat([existing, df], ignore_index=True)
+                df = append_row(existing, df)
             else:
                 # Update existing record
                 mask = existing['date'] == record['date']
@@ -248,7 +254,7 @@ class KLSETradingEngine:
             existing_perf = pd.read_csv(self.performance_file)
             # Remove existing records for today
             existing_perf = existing_perf[existing_perf['date'] != daily_record['date']]
-            perf_df = pd.concat([existing_perf, perf_df], ignore_index=True)
+            perf_df = append_row(existing_perf, perf_df)
         
         perf_df.to_csv(self.performance_file, index=False)
     
