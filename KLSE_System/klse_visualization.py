@@ -57,6 +57,7 @@ class KLSEVisualizationEngine:
         # File paths
         self.portfolio_file = "KLSE_System/klse_daily_updates.csv"
         self.performance_file = "KLSE_System/klse_performance_log.csv"
+        self.capital_flow_file = "KLSE_System/klse_capital_flows.csv"
         self.benchmark_file = "KLSE_System/klse_benchmarks.csv"
         self.charts_dir = "KLSE_System/charts"
         
@@ -158,6 +159,53 @@ class KLSEVisualizationEngine:
         logger.info(f"Loaded {len(portfolio_data)} days of portfolio data")
         return portfolio_data
     
+    def load_capital_flows(self) -> dict:
+        """Net external capital paid in, keyed by date string."""
+        if not os.path.exists(self.capital_flow_file):
+            return {}
+        try:
+            flows = pd.read_csv(self.capital_flow_file)
+            if flows.empty:
+                return {}
+            flows['date'] = pd.to_datetime(flows['date']).dt.strftime('%Y-%m-%d')
+            return flows.groupby('date')['amount_myr'].sum().to_dict()
+        except Exception as exc:
+            logger.warning(f"Could not read capital flows: {exc}")
+            return {}
+
+    def _daily_returns_excluding_flows(self, portfolio_data: pd.DataFrame) -> np.ndarray:
+        """Daily returns in %, with external capital flows removed.
+
+        Paying money into the account raises equity without earning anything,
+        so a raw day-over-day change reads an injection as a huge gain - which
+        also inflates volatility and the win rate. Subtracting the day's flow
+        before comparing against the previous close gives a time-weighted
+        return, the standard way to measure performance when capital moves in
+        or out.
+        """
+        equity = portfolio_data['total_equity_myr'].values.astype(float)
+        dates = list(portfolio_data['date'])
+        flows = self.load_capital_flows()
+
+        returns = np.zeros(len(equity))
+        for i in range(1, len(equity)):
+            previous = equity[i - 1]
+            if previous <= 0:
+                continue
+            flow = flows.get(dates[i], 0.0)
+            returns[i] = ((equity[i] - flow - previous) / previous) * 100
+        return returns
+
+    def _growth_index(self, portfolio_data: pd.DataFrame,
+                      base_value: float = 10000.0) -> np.ndarray:
+        """Equity curve rebased to base_value with capital flows stripped out.
+
+        This is what belongs on the chart: it moves only when the portfolio
+        gains or loses, so a capital injection no longer looks like a rally.
+        """
+        returns = self._daily_returns_excluding_flows(portfolio_data)
+        return base_value * np.cumprod(1 + returns / 100)
+
     def load_benchmark_data(self) -> pd.DataFrame:
         """Load benchmark data"""
         if not os.path.exists(self.benchmark_file):
@@ -189,8 +237,10 @@ class KLSEVisualizationEngine:
         fig.suptitle('🇲🇾 ChatGPT KLSE Portfolio vs Malaysian Market Indices', 
                     fontsize=16, fontweight='bold')
         
-        # Normalize portfolio data
-        portfolio_normalized = self._normalize_to_base_value(portfolio_data, 10000.0)
+        # Rebase the portfolio curve with capital flows removed, so injected
+        # cash does not show up as performance
+        portfolio_normalized = portfolio_data.copy()
+        portfolio_normalized['normalized'] = self._growth_index(portfolio_data, 10000.0)
         portfolio_dates = pd.to_datetime(portfolio_normalized['date'])
         
         # Plot portfolio performance (top chart)
@@ -256,13 +306,8 @@ class KLSEVisualizationEngine:
         
         # Daily returns chart (bottom)
         if len(portfolio_data) > 1:
-            # Calculate actual daily returns (day-over-day percentage change)
-            equity_values = portfolio_data['total_equity_myr'].values
-            daily_returns = np.zeros(len(equity_values))
-            
-            for i in range(1, len(equity_values)):
-                if equity_values[i-1] > 0:
-                    daily_returns[i] = ((equity_values[i] - equity_values[i-1]) / equity_values[i-1]) * 100
+            # Day-over-day returns, net of capital paid in
+            daily_returns = self._daily_returns_excluding_flows(portfolio_data)
             
             # Plot daily returns (skip first day since no previous day to compare)
             plot_dates = portfolio_dates[1:]
@@ -316,22 +361,26 @@ class KLSEVisualizationEngine:
         if portfolio_data.empty:
             return "No data available"
         
-        # Calculate statistics
+        # Every figure below is computed on the flow-adjusted growth index, not
+        # raw equity: capital paid in raises equity without being a gain, and
+        # would otherwise distort the return, the drawdown and the win rate.
         equity_values = portfolio_data['total_equity_myr'].values
-        starting_equity = equity_values[0]
         current_equity = equity_values[-1]
-        total_return = ((current_equity - starting_equity) / starting_equity) * 100
         
-        max_equity = portfolio_data['total_equity_myr'].max()
-        min_equity = portfolio_data['total_equity_myr'].min()
-        max_drawdown = ((max_equity - min_equity) / max_equity) * 100 if max_equity > 0 else 0
+        growth = self._growth_index(portfolio_data, 10000.0)
+        total_return = ((growth[-1] - growth[0]) / growth[0]) * 100 if growth[0] > 0 else 0
+        
+        # Drawdown from the running peak of the growth curve, which is what a
+        # drawdown means - the worst fall from a high, not high minus low.
+        running_peak = np.maximum.accumulate(growth)
+        drawdowns = np.where(running_peak > 0, (running_peak - growth) / running_peak, 0)
+        max_drawdown = float(drawdowns.max()) * 100
+        
+        injected = sum(self.load_capital_flows().values())
         
         # Calculate actual daily returns for volatility and win rate
         if len(portfolio_data) > 1:
-            daily_returns = np.zeros(len(equity_values))
-            for i in range(1, len(equity_values)):
-                if equity_values[i-1] > 0:
-                    daily_returns[i] = ((equity_values[i] - equity_values[i-1]) / equity_values[i-1]) * 100
+            daily_returns = self._daily_returns_excluding_flows(portfolio_data)
             
             # Volatility (std of daily returns, excluding first day)
             volatility = daily_returns[1:].std()
@@ -349,6 +398,10 @@ class KLSEVisualizationEngine:
         stats = [
             f"📊 PERFORMANCE STATISTICS",
             f"Current Value: {current_equity:,.2f} MYR",
+        ]
+        if injected:
+            stats.append(f"Capital Injected: {injected:,.2f} MYR (excluded from returns)")
+        stats += [
             f"Total Return: {total_return:+.2f}%",
             f"Max Drawdown: {max_drawdown:.2f}%",
             f"Volatility: {volatility:.2f}%",
