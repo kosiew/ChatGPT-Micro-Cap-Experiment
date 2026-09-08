@@ -744,8 +744,9 @@ class KLSEPortfolioManager:
             return {'success': False, 'error': f'Portfolio validation failed: {exc}'}
 
         # Log the trade only once the portfolio is safely on disk
+        action = "SELL_ALL" if remaining_shares <= 0 else "SELL_PARTIAL"
         self._log_trade(
-            "SELL_PARTIAL", full_ticker, shares, current_price, sale_value,
+            action, full_ticker, shares, current_price, sale_value,
             stock_data.get('source', 'unknown')
         )
 
@@ -760,6 +761,7 @@ class KLSEPortfolioManager:
         return {
             'success': True,
             'ticker': full_ticker,
+            'action': action,
             'shares_sold': shares,
             'price_per_share': current_price,
             'total_value': sale_value,
