@@ -30,6 +30,18 @@ except ImportError:
         print("❌ No data sources available")
         yf = None
 
+# Shared with the portfolio manager so the empty-concat guard has one
+# definition. Kept in its own try so a failure here cannot flip
+# ENHANCED_DATA_AVAILABLE above.
+try:
+    from KLSE_System.klse_portfolio_manager import append_row
+except ImportError:
+    def append_row(frame, row):
+        """Local stand-in when the portfolio manager cannot be imported."""
+        if frame is None or frame.empty:
+            return row
+        return pd.concat([frame, row], ignore_index=True)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -430,8 +442,10 @@ class KLSEMicroCapDatabase:
             updated_df = pd.DataFrame(updated_records)
             
             # Merge with unchanged records
+            # Every record can be in stock_codes, leaving nothing unchanged -
+            # a column-only frame, which pandas no longer concatenates cleanly.
             unchanged = database_df[~database_df['stock_code'].isin(stock_codes)]
-            final_df = pd.concat([unchanged, updated_df], ignore_index=True)
+            final_df = append_row(unchanged, updated_df)
             
             # Save updated database
             final_df.to_csv(self.database_file, index=False)
