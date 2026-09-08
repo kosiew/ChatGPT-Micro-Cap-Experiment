@@ -362,6 +362,57 @@ class KLSEPortfolioManager:
         
         return next_open.strftime("%Y-%m-%d %H:%M:%S %Z")
     
+    def _resolve_ticker(self, ticker: str) -> str:
+        """Normalize a KLSE code to the .KL form used throughout the portfolio."""
+        ticker = str(ticker).strip().upper()
+        return ticker if ticker.endswith('.KL') else f"{ticker}.KL"
+
+    def _consolidate_position_rows(self, full_ticker: str) -> Optional[int]:
+        """Collapse any duplicate rows for a ticker into one weighted-average row.
+
+        Older portfolio files carry a separate row per purchase, but the sell,
+        stop-loss and P&L paths all assume one row per counter and only look at
+        the first match. Returns the index of the surviving row, or None when the
+        ticker is not held.
+        """
+        if self.portfolio.empty or 'ticker' not in self.portfolio.columns:
+            return None
+
+        idxs = list(self.portfolio.index[self.portfolio['ticker'] == full_ticker])
+        if not idxs:
+            return None
+        if len(idxs) == 1:
+            return idxs[0]
+
+        keep = idxs[0]
+        rows = self.portfolio.loc[idxs]
+        shares = rows['shares'].astype(float)
+        total_shares = float(shares.sum())
+        if total_shares <= 0:
+            return keep
+
+        # Share-weighted averages keep the aggregate cost basis and stop level intact
+        avg_cost = round(float((shares * rows['avg_cost_myr'].astype(float)).sum()) / total_shares, 8)
+        avg_stop = round(float((shares * rows['stop_loss_myr'].astype(float)).sum()) / total_shares, 6)
+
+        self.portfolio.loc[keep, 'shares'] = int(total_shares) if total_shares.is_integer() else total_shares
+        self.portfolio.loc[keep, 'avg_cost_myr'] = avg_cost
+        self.portfolio.loc[keep, 'stop_loss_myr'] = avg_stop
+        if 'current_price_myr' in self.portfolio.columns:
+            prices = rows['current_price_myr'].astype(float).dropna()
+            if not prices.empty:
+                latest_price = float(prices.iloc[-1])
+                self.portfolio.loc[keep, 'current_price_myr'] = latest_price
+                if 'market_value_myr' in self.portfolio.columns:
+                    self.portfolio.loc[keep, 'market_value_myr'] = round(total_shares * latest_price, 2)
+
+        self.portfolio = self.portfolio.drop(index=idxs[1:])
+        logger.warning(
+            f"Consolidated {len(idxs)} duplicate rows for {full_ticker} into "
+            f"{total_shares:,.0f} shares @ {avg_cost:.4f} MYR (stop loss {avg_stop:.4f})"
+        )
+        return keep
+
     def _merge_into_existing_position(self, full_ticker: str, shares: int, price: float,
                                       stop_loss_pct: float) -> bool:
         """Fold a new buy into an existing holding of the same ticker.
@@ -372,14 +423,10 @@ class KLSEPortfolioManager:
         paths, which only look at the first matching row.
         Returns True when an existing position was updated.
         """
-        if self.portfolio.empty or 'ticker' not in self.portfolio.columns:
+        idx = self._consolidate_position_rows(full_ticker)
+        if idx is None:
             return False
 
-        mask = self.portfolio['ticker'] == full_ticker
-        if not mask.any():
-            return False
-
-        idx = self.portfolio[mask].index[0]
         old_shares = float(self.portfolio.loc[idx, 'shares'])
         old_cost = float(self.portfolio.loc[idx, 'avg_cost_myr'])
         total_shares = old_shares + shares
@@ -609,7 +656,7 @@ class KLSEPortfolioManager:
         Sell a specific number of shares at a specific price
         
         Args:
-            ticker: Stock ticker to sell
+            ticker: Stock ticker to sell, with or without the .KL suffix
             shares: Number of shares to sell
             price: Price per share (if None, uses current market price)
             reason: Reason for sale
@@ -617,73 +664,106 @@ class KLSEPortfolioManager:
         Returns:
             Dictionary with sale details or error info
         """
-        # Find position in portfolio
-        position_mask = self.portfolio['ticker'] == ticker
-        
-        if not position_mask.any():
-            logger.error(f"Position {ticker} not found in portfolio")
-            return {'success': False, 'error': f'Position {ticker} not found'}
-        
-        position = self.portfolio[position_mask].iloc[0]
-        current_shares = position['shares']
-        
-        if shares > current_shares:
-            logger.error(f"Cannot sell {shares} shares of {ticker} - only have {current_shares} shares")
-            return {'success': False, 'error': f'Insufficient shares: have {current_shares}, trying to sell {shares}'}
-        
+        # Validate the request before touching the portfolio or the cash balance
+        try:
+            shares = int(shares)
+        except (TypeError, ValueError):
+            logger.error(f"Invalid number of shares to sell: {shares!r}")
+            return {'success': False, 'error': f'Invalid share quantity: {shares!r}'}
+
         if shares <= 0:
             logger.error(f"Invalid number of shares to sell: {shares}")
             return {'success': False, 'error': f'Invalid share quantity: {shares}'}
-        
+
+        if price is not None and price <= 0:
+            logger.error(f"Invalid price: {price} (must be > 0)")
+            return {'success': False, 'error': 'Price must be positive'}
+
+        full_ticker = self._resolve_ticker(ticker)
+
+        # Fold duplicate rows together first: selling against a single row would
+        # see only part of the holding, and closing it would drop every other row
+        # for the same counter along with it.
+        idx = self._consolidate_position_rows(full_ticker)
+        if idx is None:
+            logger.error(f"Position {full_ticker} not found in portfolio")
+            return {'success': False, 'error': f'Position {full_ticker} not found'}
+
+        current_shares = float(self.portfolio.loc[idx, 'shares'])
+
+        if shares > current_shares:
+            logger.error(f"Cannot sell {shares:,} shares of {full_ticker} - only have {current_shares:,.0f} shares")
+            return {'success': False,
+                    'error': f'Insufficient shares: have {current_shares:,.0f}, trying to sell {shares:,}'}
+
         # If price is provided, use it; otherwise get current market price
         if price is not None:
             current_price = price
             stock_data = {'price': price, 'source': 'manual'}
         else:
             # Get current market price
-            stock_data = self._get_stock_data(ticker)
+            stock_data = self._get_stock_data(full_ticker)
             if not stock_data:
-                logger.error(f"Cannot get current price for {ticker}")
-                return {'success': False, 'error': f'Could not fetch market data for {ticker}'}
+                logger.error(f"Cannot get current price for {full_ticker}")
+                return {'success': False, 'error': f'Could not fetch market data for {full_ticker}'}
             current_price = stock_data['price']
-        
+
+        if current_price is None or current_price <= 0:
+            logger.error(f"Invalid market price for {full_ticker}: {current_price}")
+            return {'success': False, 'error': 'Invalid market price'}
+
         sale_value = current_price * shares
-        
+        remaining_shares = current_shares - shares
+
+        # Snapshot so a rejected save leaves the books exactly as they were
+        prev_portfolio = self.portfolio.copy()
+        prev_cash = self.current_cash_myr
+
+        # Update the position (reduce shares or close it out)
+        if remaining_shares <= 0:
+            self.portfolio = self.portfolio.drop(index=idx)
+        else:
+            self.portfolio.loc[idx, 'shares'] = (
+                int(remaining_shares) if remaining_shares.is_integer() else remaining_shares
+            )
+            if 'current_price_myr' in self.portfolio.columns:
+                self.portfolio.loc[idx, 'current_price_myr'] = current_price
+            if 'market_value_myr' in self.portfolio.columns:
+                self.portfolio.loc[idx, 'market_value_myr'] = round(remaining_shares * current_price, 2)
+
         # Add cash from sale
         self.current_cash_myr += sale_value
-        
-        # Log the trade
+
+        # Save portfolio - validation failures roll the sale back entirely
+        try:
+            self._save_portfolio()
+        except ValueError as exc:
+            self.portfolio = prev_portfolio
+            self.current_cash_myr = prev_cash
+            logger.error(f"Sale of {shares:,} shares of {full_ticker} rolled back: {exc}")
+            return {'success': False, 'error': f'Portfolio validation failed: {exc}'}
+
+        # Log the trade only once the portfolio is safely on disk
         self._log_trade(
-            "SELL_PARTIAL", ticker, shares, current_price, sale_value,
+            "SELL_PARTIAL", full_ticker, shares, current_price, sale_value,
             stock_data.get('source', 'unknown')
         )
-        
-        # Update the position (reduce shares or remove completely)
-        remaining_shares = current_shares - shares
-        if shares == current_shares:
-            # Selling all shares - remove position completely
-            self.portfolio = self.portfolio[~position_mask]
-            logger.info(f"✅ Sold all {shares} shares of {ticker} - position closed")
+
+        if remaining_shares <= 0:
+            logger.info(f"✅ Sold all {shares:,} shares of {full_ticker} - position closed")
         else:
-            # Selling partial shares - update the position
-            idx = self.portfolio[position_mask].index[0]
-            self.portfolio.loc[idx, 'shares'] = remaining_shares
-            self.portfolio.loc[idx, 'market_value_myr'] = remaining_shares * current_price
-            logger.info(f"✅ Sold {shares} shares of {ticker} - {remaining_shares} shares remaining")
-        
-        # Save portfolio
-        self._save_portfolio()
-        
-        logger.info(f"Sale details: {shares} shares at {current_price:.3f} MYR = {sale_value:.2f} MYR - {reason}")
-        
+            logger.info(f"✅ Sold {shares:,} shares of {full_ticker} - {remaining_shares:,.0f} shares remaining")
+
+        logger.info(f"Sale details: {shares:,} shares at {current_price:.3f} MYR = {sale_value:.2f} MYR - {reason}")
+
         # Return sale details
         return {
             'success': True,
-            'ticker': ticker,
+            'ticker': full_ticker,
             'shares_sold': shares,
             'price_per_share': current_price,
             'total_value': sale_value,
-            'remaining_shares': remaining_shares,
+            'remaining_shares': int(remaining_shares) if remaining_shares.is_integer() else remaining_shares,
             'reason': reason
         }
 
