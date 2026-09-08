@@ -184,7 +184,7 @@ Scripts and CSV Files/
 
 Root Directory/
 ├── redundant_data_fetcher.py         # Core redundancy system
-├── enhanced_klse_trading.py          # Malaysian market version
+├── KLSE_System/                      # Malaysian market system (live)
 ├── KLSE_Data_Sources_Report.md       # Integration documentation
 └── ...
 ```

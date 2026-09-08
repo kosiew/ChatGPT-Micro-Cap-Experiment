@@ -58,7 +58,14 @@ Our comprehensive investigation into alternative data sources for Malaysian stoc
 - **Monitoring**: Success rate tracking per source
 - **Validation**: Price data sanity checks
 
-### **2. Enhanced Trading System (`enhanced_klse_trading.py`)**
+### **2. Enhanced Trading System (`enhanced_klse_trading.py`)** — superseded, removed
+> This prototype was never wired into the running system and has since been
+> deleted. Every capability below now lives in `KLSE_System/` instead:
+> redundant fetching via `redundant_data_fetcher.KLSEDataFetcher` (used by
+> `klse_portfolio_manager.py`), board-lot validation in
+> `KLSEPortfolioManager._validate_board_lot()`, and source health reporting in
+> `KLSEDataFetcher.get_source_performance()`.
+
 - **Features**: Production-ready KLSE trading with redundancy
 - **Capabilities**: 
   - Batch data fetching for efficiency
@@ -116,7 +123,9 @@ Our comprehensive investigation into alternative data sources for Malaysian stoc
 ## 🚀 **Recommendations for Production**
 
 ### **Immediate Implementation**
-1. **Replace existing trading script** with `enhanced_klse_trading.py`
+1. **Replace existing trading script** — done, but by `KLSE_System/klse_trading_engine.py`
+   and `KLSE_System/klse_portfolio_manager.py` rather than the
+   `enhanced_klse_trading.py` prototype, which was removed
 2. **Deploy redundant data fetcher** for all stock price operations
 3. **Monitor data source performance** using built-in health checks
 
@@ -156,7 +165,10 @@ The investigation successfully established **robust redundancy** for Malaysian s
 
 **Recommendation**: ✅ **Proceed with KLSE adaptation** using the enhanced trading system. The redundancy infrastructure ensures reliable operation even if primary data sources experience issues.
 
+> Carried out in `KLSE_System/`, not by the `enhanced_klse_trading.py` prototype
+> named below, which was superseded and removed.
+
 ---
 
 *Investigation completed: August 31, 2025*  
-*Files delivered: `alternative_data_sources.py`, `redundant_data_fetcher.py`, `enhanced_klse_trading.py`*
+*Files delivered: `alternative_data_sources.py`, `redundant_data_fetcher.py`, `enhanced_klse_trading.py` (since removed — superseded by `KLSE_System/`)*
